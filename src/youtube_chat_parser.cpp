@@ -83,6 +83,8 @@ std::optional<ResponseInfo> parse_chat_messages(peel::ArrayRef<const char> respo
         return result;
     }
     result.emplace();
+    result->poll_interval = poll_interval.value();
+    result->next_page_token = next_page_token;
     auto item_count = items->get_length();
     result->messages.reserve(item_count);
     for(guint i = 0; i < item_count; ++i) {
