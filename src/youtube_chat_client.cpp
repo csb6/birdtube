@@ -62,6 +62,7 @@ PEEL_CLASS_IMPL(ChatClient, "YoutubeChatClient", gobject::Object)
 struct ChatClient::Impl {
     void call_error_callback(glib::Error*);
     // Operations
+    Task<void> authorize(peel::RefPtr<OneShotServer> auth_listener);
     Task<StreamInfo> get_live_stream_info_async(peel::String video_id, gio::Cancellable*);
     Task<void> fetch_messages_async(peel::String next_page_token, guint poll_interval);
 
@@ -173,9 +174,7 @@ Task<StreamInfo> ChatClient::Impl::get_live_stream_info_async(peel::String video
 
     AsyncResult result;
     call->invoke_async(cancellable, result.callback());
-    g_message("In get_live_stream_info_async() (before I/O call)");
     call->invoke_finish(co_await result, &error);
-    g_message("In get_live_stream_info_async() (after I/O call)");
     if(error) {
         co_return error;
     }
@@ -188,7 +187,7 @@ Task<StreamInfo> ChatClient::Impl::get_live_stream_info_async(peel::String video
     co_return std::move(stream_info.value());
 }
 
-Task<void> ChatClient::connect_to_chat_async(const char* stream_url, gio::Cancellable* cancellable)
+Task<void> ChatClient::Impl::authorize(peel::RefPtr<OneShotServer> auth_listener)
 {
     static const uint8_t success_response[] =
         "<!DOCTYPE html>"
@@ -197,24 +196,22 @@ Task<void> ChatClient::connect_to_chat_async(const char* stream_url, gio::Cancel
             "<title>Purple-Youtube - Authorization Successful</title>"
           "</head>"
           "<body>"
-            "<p>Successfully authorized Purple-Youtube! You now can close this tab.</p>"
+            "<p>Successfully authorized Purple-Youtube! You can close this tab.</p>"
           "</body>"
         "</html>";
 
     ErrorPtr error;
 
-    // TODO: if we are already authorized, bypass the OAuth flow and these checks
-    if(!m_impl->pkce || !m_impl->state_str) {
+    if(!this->pkce || !this->state_str) {
         error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "No OAuth flow in-progress - call generate_auth_url first");
         co_return error;
     }
 
-    // First, get the server's response and determine if we are authorized
-    auto auth_listener = OneShotServer::create();
+    // First, wait for the server's message and determine if we are authorized
     auto auth_response = co_await auth_listener->listen(REDIRECT_PORT);
     if(auto* error = std::get_if<ErrorPtr>(&auth_response)) {
-        m_impl->pkce = {};
-        m_impl->state_str = {};
+        this->pkce = {};
+        this->state_str = {};
         co_return std::move(*error);
     }
     auto query = std::move(std::get<peel::RefPtr<glib::HashTable>>(auth_response));
@@ -222,32 +219,32 @@ Task<void> ChatClient::connect_to_chat_async(const char* stream_url, gio::Cancel
     if(error_str) {
         error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "OAuth redirect error: %s", error_str);
         auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
-        m_impl->pkce = {};
-        m_impl->state_str = {};
+        this->pkce = {};
+        this->state_str = {};
         co_return error;
     }
     auto* auth_code = (const char*)glib::HashTable::lookup(query, "code");
     if(!auth_code) {
         error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "OAuth redirect error: Missing auth code");
         auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
-        m_impl->pkce = {};
-        m_impl->state_str = {};
+        this->pkce = {};
+        this->state_str = {};
         co_return error;
     }
     auto* received_state_str = (const char*)glib::HashTable::lookup(query, "state");
-    auto expected_state_str = std::move(m_impl->state_str);
+    auto expected_state_str = std::move(this->state_str);
     if(!received_state_str || strcmp(received_state_str, expected_state_str) != 0) {
-        error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "OAuth redirect error: Missing state string");
+        error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "OAuth redirect error: Missing/incorrect state string");
         auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
-        m_impl->pkce = {};
+        this->pkce = {};
         co_return error;
     }
 
     // Attempt to get the access token using the authorization code provided by the server
     AsyncResult result;
-    m_impl->proxy->fetch_access_token_async(auth_code, m_impl->pkce->get_verifier(), nullptr, result.callback());
-    m_impl->proxy->fetch_access_token_finish(co_await result, &error);
-    m_impl->pkce = {};
+    this->proxy->fetch_access_token_async(auth_code, this->pkce->get_verifier(), nullptr, result.callback());
+    this->proxy->fetch_access_token_finish(co_await result, &error);
+    this->pkce = {};
     if(error) {
         // TODO: map GError to HTTP error code
         auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
@@ -256,13 +253,30 @@ Task<void> ChatClient::connect_to_chat_async(const char* stream_url, gio::Cancel
 
     // From this point forwards, OAuth2Proxy will add the access token as an
     // 'Authorization: Bearer <access_token>' header to each request
-    m_impl->is_authorized = true;
+    this->is_authorized = true;
     // Send the user's web browser a message letting them know authorization was successful
     auth_listener->respond(soup::Status::OK, soup::MemoryUse::STATIC, success_response);
     // TODO: schedule next refresh token update
     // TODO: how to ensure requests do not use expired access tokens
     // TODO: seems like librest is treating some error responses as success. If we send an empty client
     //  secret, everything appears to succeed but the Bearer token is '(null)', causing API calls to fail
+    co_return error;
+}
+
+Task<void> ChatClient::connect_to_chat_async(const char* stream_url, gio::Cancellable* cancellable)
+{
+    ErrorPtr error;
+
+    // Note: needs to stick around for the entirety of this function so there is enough time
+    //  for the server to send a response back to the web browser
+    peel::RefPtr<OneShotServer> auth_listener;
+    if(!m_impl->is_authorized) {
+        auth_listener = OneShotServer::create();
+        error = co_await m_impl->authorize(auth_listener);
+        if(error) {
+            co_return error;
+        }
+    }
 
     auto video_id = extract_video_id(stream_url, &error);
     if(error) {
