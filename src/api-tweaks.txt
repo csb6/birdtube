@@ -2,6 +2,8 @@
 skip rest_proxy_simple_run
 skip rest_proxy_simple_run_valist
 skip RestProxy::vfunc_simple_run_valist
+# This should return a non-owning reference but instead returns an owning reference
+unowned rest_oauth2_proxy_get_expiration_date return
 
 # json-glib
 skip json_parser_has_assignment

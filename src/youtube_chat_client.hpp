@@ -43,7 +43,7 @@ public:
     static peel::RefPtr<ChatClient> create(const char* client_id, const char* client_secret);
     static peel::RefPtr<ChatClient> create_authorized(const char* client_id, const char* client_secret,
                                                       const char* access_token, const char* refresh_token,
-                                                      glib::DateTime* access_token_expiration);
+                                                      peel::RefPtr<glib::DateTime> access_token_expiration);
 
     void set_error_callback(ErrorCallback&&);
     peel::String generate_auth_url(peel::UniquePtr<glib::Error>*);

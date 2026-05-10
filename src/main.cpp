@@ -27,6 +27,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 namespace glib = peel::GLib;
 
+// TODO: have callback for saving auth info to persistent storage once obtained
 int main(int argc, char** argv)
 {
     if(argc != 2) {
@@ -34,8 +35,8 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    const char* stream_url = argv[1];
     std::unique_ptr<char*, decltype(&g_strfreev)> env{g_get_environ(), &g_strfreev};
+    // Required environment variables
     const char* client_id = g_environ_getenv(env.get(), "YT_CLIENT_ID");
     if(!client_id) {
         g_printerr("Missing environment variable YT_CLIENT_ID");
@@ -46,9 +47,42 @@ int main(int argc, char** argv)
         g_printerr("Missing environment variable YT_CLIENT_SECRET");
         return 1;
     }
+    // Optional environment variables
+    const char* access_token = g_environ_getenv(env.get(), "YT_ACCESS_TOKEN");
+    const char* refresh_token = g_environ_getenv(env.get(), "YT_REFRESH_TOKEN");
+    const char* expiration = g_environ_getenv(env.get(), "YT_EXPIRATION");
 
+    const char* stream_url = argv[1];
+    peel::UniquePtr<glib::Error> error;
+    peel::RefPtr<youtube::ChatClient> client;
     auto main_loop = glib::MainLoop::create(glib::MainContext::default_(), /*is_running=*/false);
-    auto client = youtube::ChatClient::create(client_id, client_secret);
+
+    if(!access_token && !refresh_token && !expiration) {
+        // Stream URL provided, but no existing access/refresh tokens (need to request authorization)
+        client = youtube::ChatClient::create(client_id, client_secret);
+        auto auth_url = client->generate_auth_url(&error);
+        if(error) {
+            g_printerr("Failed to get OAuth authorization URL: %s\n", error->message);
+            return 1;
+        }
+        // Launch OAuth authorization flow in web browser
+        char* cmd = g_strdup_printf("xdg-open \"%s\"", auth_url.c_str());
+        system(cmd);
+        g_free(cmd);
+    } else if(access_token && refresh_token && expiration) {
+        // Access token and refresh token provided (no need to request authorization again)
+        auto expiration_time = glib::DateTime::create_from_iso8601(expiration, nullptr);
+        if(!expiration_time) {
+            g_printerr("Invalid YT_EXPIRATION (not in ISO8601 format)");
+            return 1;
+        }
+        client = youtube::ChatClient::create_authorized(client_id, client_secret, access_token,
+                                                        refresh_token, std::move(expiration_time));
+    } else {
+        g_printerr("Missing YT_ACCESS_TOKEN, YT_REFRESH_TOKEN, and/or YT_EXPIRATION");
+        return 1;
+    }
+
     client->set_error_callback([main_loop](glib::Error* error) {
         g_printerr("Error: %s\n", error->message);
         main_loop->quit();
@@ -62,15 +96,6 @@ int main(int argc, char** argv)
         }
     });
 
-    peel::UniquePtr<glib::Error> error;
-    auto auth_url = client->generate_auth_url(&error);
-    if(error) {
-        g_printerr("Failed to get OAuth authorization URL: %s\n", error->message);
-        return 1;
-    }
-    char* cmd = g_strdup_printf("xdg-open \"%s\"", auth_url.c_str());
-    system(cmd);
-    g_free(cmd);
     auto main_task = [main_loop, client, stream_url]() -> Task<void> {
         auto error = co_await client->connect_to_chat_async(stream_url, nullptr);
         if(error) {

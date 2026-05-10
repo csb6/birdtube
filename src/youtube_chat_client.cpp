@@ -63,8 +63,12 @@ struct ChatClient::Impl {
     void call_error_callback(glib::Error*);
     // Operations
     Task<void> authorize(peel::RefPtr<OneShotServer> auth_listener);
+    void schedule_access_token_refresh();
+    Task<void> refresh_access_token_async();
     Task<StreamInfo> get_live_stream_info_async(peel::String video_id, gio::Cancellable*);
     Task<void> fetch_messages_async(peel::String next_page_token, guint poll_interval);
+
+    bool is_access_expired() const;
 
     ChatClient* client;
     peel::RefPtr<rest::OAuth2Proxy> proxy;
@@ -111,18 +115,13 @@ peel::RefPtr<ChatClient> ChatClient::create(const char* client_id, const char* c
 
 peel::RefPtr<ChatClient> ChatClient::create_authorized(const char* client_id, const char* client_secret,
                                                        const char* access_token, const char* refresh_token,
-                                                       glib::DateTime* access_token_expiration)
+                                                       peel::RefPtr<glib::DateTime> access_token_expiration)
 {
-    auto client = Object::create<ChatClient>();
-    client->m_impl->proxy->set_client_id(client_id);
-    client->m_impl->proxy->set_client_secret(client_secret);
-    auto curr_time = glib::DateTime::create_now_utc();
-    if(curr_time->compare(access_token_expiration) >= 0) {
-        // TODO: schedule refresh
-        client->m_impl->is_authorized = false;
-    } else {
-        client->m_impl->is_authorized = true;
-    }
+    auto client = create(client_id, client_secret);
+    client->m_impl->is_authorized = true;
+    client->m_impl->proxy->set_access_token(access_token);
+    client->m_impl->proxy->set_refresh_token(refresh_token);
+    client->m_impl->proxy->set_expiration_date(access_token_expiration);
     return client;
 }
 
@@ -165,6 +164,12 @@ Task<StreamInfo> ChatClient::Impl::get_live_stream_info_async(peel::String video
     if(!this->is_authorized) {
         error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "Client is not authorized to make API calls");
         co_return error;
+    }
+    if(this->is_access_expired()) {
+        error = co_await this->refresh_access_token_async();
+        if(error) {
+            co_return error;
+        }
     }
     auto call = this->proxy->new_call();
     call->add_param("part", "snippet,liveStreamingDetails");
@@ -256,10 +261,40 @@ Task<void> ChatClient::Impl::authorize(peel::RefPtr<OneShotServer> auth_listener
     this->is_authorized = true;
     // Send the user's web browser a message letting them know authorization was successful
     auth_listener->respond(soup::Status::OK, soup::MemoryUse::STATIC, success_response);
-    // TODO: schedule next refresh token update
-    // TODO: how to ensure requests do not use expired access tokens
+    g_message("Access token: %s\n", this->proxy->get_access_token());
+    g_message("Refresh token: %s\n", this->proxy->get_refresh_token());
+    schedule_access_token_refresh();
+    auto expiration = this->proxy->get_expiration_date();
+    g_message("Token expiration: %s\n", expiration->format_iso8601().c_str());
+
     // TODO: seems like librest is treating some error responses as success. If we send an empty client
     //  secret, everything appears to succeed but the Bearer token is '(null)', causing API calls to fail
+    co_return error;
+}
+
+void ChatClient::Impl::schedule_access_token_refresh()
+{
+    auto expiration = this->proxy->get_expiration_date();
+    auto now = glib::DateTime::create_now_utc();
+    // Refresh 2 minutes before the expiration date
+    int64_t refresh_interval = expiration->difference(now) - 120000;
+    assert(refresh_interval >= 0);
+    // TODO: how to cancel these timeouts when client object is destroyed
+    glib::timeout_add((unsigned)refresh_interval, [this]() -> bool {
+        this->refresh_access_token_async().start();
+        return false;
+    });
+}
+
+Task<void> ChatClient::Impl::refresh_access_token_async()
+{
+    ErrorPtr error;
+    g_assert(this->is_authorized);
+
+    AsyncResult result;
+    this->proxy->refresh_access_token_async(nullptr, result.callback());
+    this->proxy->refresh_access_token_finish(co_await result, &error);
+    schedule_access_token_refresh();
     co_return error;
 }
 
@@ -297,6 +332,15 @@ Task<void> ChatClient::connect_to_chat_async(const char* stream_url, gio::Cancel
 Task<void> ChatClient::Impl::fetch_messages_async(peel::String next_page_token, guint poll_interval)
 {
     g_assert(this->is_authorized);
+
+    ErrorPtr error;
+    if(this->is_access_expired()) {
+        error = co_await this->refresh_access_token_async();
+        if(error) {
+            co_return error;
+        }
+    }
+
     auto call = this->proxy->new_call();
     call->add_param("liveChatId", this->stream_info.live_chat_id);
     call->add_param("part", "snippet,authorDetails");
@@ -308,7 +352,6 @@ Task<void> ChatClient::Impl::fetch_messages_async(peel::String next_page_token, 
     }
     call->set_function("liveChat/messages");
 
-    ErrorPtr error;
     AsyncResult result;
     g_print("Poll interval: %u\n", poll_interval);
     call->invoke_async(nullptr, result.callback());
@@ -345,6 +388,13 @@ void ChatClient::Impl::call_error_callback(glib::Error* error)
     if(this->error_callback) {
         this->error_callback(error);
     }
+}
+
+bool ChatClient::Impl::is_access_expired() const
+{
+    auto expiration = this->proxy->get_expiration_date();
+    auto now = glib::DateTime::create_now_utc();
+    return expiration->compare(now) <= 0;
 }
 
 static
