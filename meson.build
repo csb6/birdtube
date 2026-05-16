@@ -26,7 +26,7 @@ custom_target('peel-codegen',
   input: 'src/api-tweaks.txt',
   output: 'peel-codegen',
   env: {
-    'GI_GIR_PATH': '/usr/lib/x86_64-linux-gnu/gir-1.0'
+    'GI_GIR_PATH': '/usr/lib/x86_64-linux-gnu/gir-1.0:/app/3rd-party/PurpleYoutube/share/gir-1.0'
   },
 )
 
