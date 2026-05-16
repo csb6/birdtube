@@ -1,7 +1,6 @@
 project('youtube-chat-client', 'c', 'cpp',
-        default_options: ['c_std=c99', 'warning_level=2'],
+        default_options: ['c_std=c99', 'warning_level=2', 'cpp_std=c++23'],
         meson_version: '>=1.1.0')
-add_project_arguments('-std=c++20', language: 'cpp')
 
 if get_option('log-http')
   add_project_arguments('-DYOUTUBE_CHAT_CLIENT_LOGGING', language: ['c', 'cpp'])
