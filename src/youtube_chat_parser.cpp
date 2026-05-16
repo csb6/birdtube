@@ -16,6 +16,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "youtube_chat_parser.hpp"
+#include <optional>
 #include <peel/Json/Parser.h>
 #include <peel/Json/Node.h>
 #include <peel/Json/Path.h>
@@ -26,67 +27,59 @@ namespace youtube {
 static
 void parse_text_message(json::Node* item, std::vector<ChatMessage>& messages);
 
-static peel::RefPtr<json::Node> parse_json(peel::ArrayRef<const char> response, peel::UniquePtr<glib::Error>* error);
+static std::expected<peel::RefPtr<json::Node>, ErrorPtr> parse_json(peel::ArrayRef<const char> response);
 
 static peel::RefPtr<json::Array> match_json_path(json::Node* root, const char* path);
 static peel::String match_json_string(json::Node* root, const char* path);
 static std::optional<guint> match_json_uint(json::Node* root, const char* path);
 static peel::RefPtr<glib::DateTime> match_json_date(json::Node* root, const char* path);
 
-std::optional<StreamInfo> parse_stream_info(peel::ArrayRef<const char> response, peel::UniquePtr<glib::Error>* error)
+std::expected<StreamInfo, ErrorPtr> parse_stream_info(peel::ArrayRef<const char> response)
 {
-    std::optional<StreamInfo> result;
-    auto root = parse_json(response, error);
-    if(*error) {
-        return result;
+    auto root = parse_json(response);
+    if(!root.has_value()) {
+        return std::unexpected(std::move(root.error()));
     }
 
     // Get stream title
-    auto title = match_json_string(root, "$.items[*].snippet.title");
+    auto title = match_json_string(*root, "$.items[*].snippet.title");
     if(!title) {
-        *error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "Missing live stream title");
-        return result;
+        return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Missing live stream title"));
     }
     // Get stream live chat ID
-    auto live_chat_id = match_json_string(root, "$.items[*].liveStreamingDetails.activeLiveChatId");
-    if(live_chat_id) {
-        result.emplace(std::move(title), std::move(live_chat_id));
-    } else {
-        *error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "Missing live chat ID");
+    auto live_chat_id = match_json_string(*root, "$.items[*].liveStreamingDetails.activeLiveChatId");
+    if(!live_chat_id) {
+        return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Missing live chat ID"));
     }
-    return result;
+    return StreamInfo{std::move(title), std::move(live_chat_id)};
 }
 
-std::optional<ResponseInfo> parse_chat_messages(peel::ArrayRef<const char> response, peel::UniquePtr<glib::Error>* error)
+std::expected<ResponseInfo, ErrorPtr> parse_chat_messages(peel::ArrayRef<const char> response)
 {
-    std::optional<ResponseInfo> result;
-    auto root = parse_json(response, error);
-    if(*error) {
-        return result;
+    auto root = parse_json(response);
+    if(!root.has_value()) {
+        return std::unexpected(std::move(root.error()));
     }
     // Get interval to wait before sending next request
-    auto poll_interval = match_json_uint(root, "$.pollingIntervalMillis");
+    auto poll_interval = match_json_uint(*root, "$.pollingIntervalMillis");
     if(!poll_interval.has_value()) {
-        *error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "Invalid polling interval");
-        return result;
+        return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Invalid polling interval"));
     }
     // Get the page token to sent in the next request
-    auto next_page_token = match_json_string(root, "$.nextPageToken");
+    auto next_page_token = match_json_string(*root, "$.nextPageToken");
     if(!next_page_token) {
-        *error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "Missing nextPageToken");
-        return result;
+        return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Missing nextPageToken"));
     }
     // Process the batch of chat messages we have received
-    auto items = match_json_path(root, "$.items[*]");
+    auto items = match_json_path(*root, "$.items[*]");
     if(!items) {
-        *error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "Missing chat messages");
-        return result;
+        return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Missing chat messages"));
     }
-    result.emplace();
-    result->poll_interval = poll_interval.value();
-    result->next_page_token = next_page_token;
+    ResponseInfo result;
+    result.poll_interval = poll_interval.value();
+    result.next_page_token = next_page_token;
     auto item_count = items->get_length();
-    result->messages.reserve(item_count);
+    result.messages.reserve(item_count);
     for(guint i = 0; i < item_count; ++i) {
         json::Node* item = items->get_element(i);
         auto message_type = match_json_string(item, "$.snippet.type");
@@ -94,7 +87,7 @@ std::optional<ResponseInfo> parse_chat_messages(peel::ArrayRef<const char> respo
             continue;
         }
         if(message_type == "textMessageEvent") {
-            parse_text_message(item, result->messages);
+            parse_text_message(item, result.messages);
         } else {
             g_message("Unsupported message type: %s", message_type.c_str());
         }
@@ -123,19 +116,18 @@ void parse_text_message(json::Node* item, std::vector<ChatMessage>& messages)
 }
 
 static
-peel::RefPtr<json::Node> parse_json(peel::ArrayRef<const char> response, peel::UniquePtr<glib::Error>* error)
+std::expected<peel::RefPtr<json::Node>, ErrorPtr> parse_json(peel::ArrayRef<const char> response)
 {
+    peel::UniquePtr<glib::Error> error;
     auto parser = json::Parser::create_immutable();
-
-    parser->load_from_data(response.begin(), response.size(), error);
-    if(*error) {
-        return {};
+    parser->load_from_data(response.begin(), response.size(), &error);
+    if(error) {
+        return std::unexpected(std::move(error));
     }
 
     auto response_root = parser->get_root();
     if(!response_root) {
-        *error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "Unexpected empty JSON");
-        return {};
+        return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Unexpected empty JSON"));
     }
     return response_root;
 }

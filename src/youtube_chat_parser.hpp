@@ -18,12 +18,13 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include <vector>
-#include <optional>
+#include <expected>
 #include <peel/GLib/Error.h>
 #include <peel/String.h>
 #include <peel/UniquePtr.h>
 #include <peel/ArrayRef.h>
 #include "youtube_types.hpp"
+#include "error_wrapper.hpp"
 
 namespace youtube {
 
@@ -33,8 +34,8 @@ struct ResponseInfo {
     peel::String next_page_token;
 };
 
-std::optional<StreamInfo> parse_stream_info(peel::ArrayRef<const char> response, peel::UniquePtr<glib::Error>* error);
+std::expected<StreamInfo, ErrorPtr> parse_stream_info(peel::ArrayRef<const char> response);
 
-std::optional<ResponseInfo> parse_chat_messages(peel::ArrayRef<const char> response, peel::UniquePtr<glib::Error>* error);
+std::expected<ResponseInfo, ErrorPtr> parse_chat_messages(peel::ArrayRef<const char> response);
 
 } // namespace youtube

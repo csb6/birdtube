@@ -33,6 +33,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "task.hpp"
 #include "youtube_chat_parser.hpp"
 #include "one_shot_server.hpp"
+#include "error_wrapper.hpp"
 
 G_DEFINE_QUARK(youtube-chat-error-quark, youtube_chat_error)
 
@@ -46,16 +47,14 @@ namespace youtube {
 #define REDIRECT_PORT 43215
 #define STATE_STR_LEN 16
 
-using ErrorPtr = peel::UniquePtr<glib::Error>;
-
 static
 char* build_server_error_response(const char* error_str);
 
 static
-peel::String extract_video_id(const char* stream_url, ErrorPtr*);
+std::expected<peel::String, ErrorPtr> extract_video_id(const char* stream_url);
 
 static
-peel::String get_random_string(ErrorPtr*);
+std::expected<peel::String, ErrorPtr> get_random_string();
 
 PEEL_CLASS_IMPL(ChatClient, "YoutubeChatClient", gobject::Object)
 
@@ -63,7 +62,7 @@ struct ChatClient::Impl {
     void call_error_callback(glib::Error*);
     // Operations
     Task<void> authorize(peel::RefPtr<OneShotServer> auth_listener);
-    void schedule_access_token_refresh();
+    Task<void> schedule_access_token_refresh();
     Task<void> refresh_access_token_async();
     Task<StreamInfo> get_live_stream_info_async(peel::String video_id, gio::Cancellable*);
     Task<void> fetch_messages_async(peel::String next_page_token, guint poll_interval);
@@ -135,21 +134,21 @@ void ChatClient::set_error_callback(ErrorCallback&& callback)
     m_impl->error_callback = std::move(callback);
 }
 
-peel::String ChatClient::generate_auth_url(ErrorPtr* error)
+std::expected<peel::String, ErrorPtr> ChatClient::generate_auth_url()
 {
     if(m_impl->pkce || m_impl->state_str) {
-        *error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "Already have an in-progress OAuth flow");
-        return {};
+        return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Already have an in-progress OAuth flow"));
     }
     // Generate a PKCE challenge (i.e. a hashed random string). Server will use this value to
     // validate that the same client is sending all OAuth requests.
     m_impl->pkce = rest::PkceCodeChallenge::create_random();
     // State string serves as a way to tag this request so that later we can be reasonably sure the server
     // is sending a reply to this request specifically
-    m_impl->state_str = get_random_string(error);
-    if(*error) {
-        return {};
+    auto state_str = get_random_string();
+    if(!state_str.has_value()) {
+        return state_str;
     }
+    m_impl->state_str = std::move(state_str.value());
     // User must open this URL in a browser and grant the application permissions.
     // Once they have done so, they will get redirected to LOOPBACK_REDIRECT_URL. We
     // will be listening on REDIRECT_PORT and will continue the authorization flow from
@@ -159,16 +158,13 @@ peel::String ChatClient::generate_auth_url(ErrorPtr* error)
 
 Task<StreamInfo> ChatClient::Impl::get_live_stream_info_async(peel::String video_id, gio::Cancellable* cancellable)
 {
-    ErrorPtr error;
-
     if(!this->is_authorized) {
-        error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "Client is not authorized to make API calls");
-        co_return error;
+        co_return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Client is not authorized to make API calls"));
     }
     if(this->is_access_expired()) {
-        error = co_await this->refresh_access_token_async();
+        auto error = co_await this->refresh_access_token_async();
         if(error) {
-            co_return error;
+            co_return std::unexpected(error);
         }
     }
     auto call = this->proxy->new_call();
@@ -177,17 +173,20 @@ Task<StreamInfo> ChatClient::Impl::get_live_stream_info_async(peel::String video
     call->add_param("id", video_id);
     call->set_function("videos");
 
-    AsyncResult result;
-    call->invoke_async(cancellable, result.callback());
-    call->invoke_finish(co_await result, &error);
-    if(error) {
-        co_return error;
+    {
+        AsyncResult result;
+        peel::UniquePtr<glib::Error> error;
+        call->invoke_async(cancellable, result.callback());
+        call->invoke_finish(co_await result, &error);
+        if(error) {
+            co_return std::unexpected(std::move(error));
+        }
     }
     const char* response = call->get_payload();
     auto response_len = call->get_payload_length();
-    auto stream_info = parse_stream_info(peel::ArrayRef{response, (guint)response_len}, &error);
-    if(error) {
-        co_return error;
+    auto stream_info = parse_stream_info(peel::ArrayRef{response, (guint)response_len});
+    if(!stream_info.has_value()) {
+        co_return std::unexpected(std::move(stream_info.error()));
     }
     co_return std::move(stream_info.value());
 }
@@ -205,55 +204,54 @@ Task<void> ChatClient::Impl::authorize(peel::RefPtr<OneShotServer> auth_listener
           "</body>"
         "</html>";
 
-    ErrorPtr error;
-
     if(!this->pkce || !this->state_str) {
-        error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "No OAuth flow in-progress - call generate_auth_url first");
-        co_return error;
+        co_return ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "No OAuth flow in-progress - call generate_auth_url first");
     }
 
     // First, wait for the server's message and determine if we are authorized
     auto auth_response = co_await auth_listener->listen(REDIRECT_PORT);
-    if(auto* error = std::get_if<ErrorPtr>(&auth_response)) {
+    if(!auth_response.has_value()) {
         this->pkce = {};
         this->state_str = {};
-        co_return std::move(*error);
+        co_return std::move(auth_response.error());
     }
-    auto query = std::move(std::get<peel::RefPtr<glib::HashTable>>(auth_response));
-    auto* error_str = (const char*)glib::HashTable::lookup(query, "error");
+    auto* error_str = (const char*)glib::HashTable::lookup(*auth_response, "error");
     if(error_str) {
-        error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "OAuth redirect error: %s", error_str);
+        ErrorPtr error(YOUTUBE_CHAT_ERROR, 1, "OAuth redirect error: %s", error_str);
         auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
         this->pkce = {};
         this->state_str = {};
         co_return error;
     }
-    auto* auth_code = (const char*)glib::HashTable::lookup(query, "code");
+    auto* auth_code = (const char*)glib::HashTable::lookup(*auth_response, "code");
     if(!auth_code) {
-        error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "OAuth redirect error: Missing auth code");
+        ErrorPtr error(YOUTUBE_CHAT_ERROR, 1, "OAuth redirect error: Missing auth code");
         auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
         this->pkce = {};
         this->state_str = {};
         co_return error;
     }
-    auto* received_state_str = (const char*)glib::HashTable::lookup(query, "state");
+    auto* received_state_str = (const char*)glib::HashTable::lookup(*auth_response, "state");
     auto expected_state_str = std::move(this->state_str);
     if(!received_state_str || strcmp(received_state_str, expected_state_str) != 0) {
-        error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "OAuth redirect error: Missing/incorrect state string");
+        ErrorPtr error(YOUTUBE_CHAT_ERROR, 1, "OAuth redirect error: Missing/incorrect state string");
         auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
         this->pkce = {};
         co_return error;
     }
 
     // Attempt to get the access token using the authorization code provided by the server
-    AsyncResult result;
-    this->proxy->fetch_access_token_async(auth_code, this->pkce->get_verifier(), nullptr, result.callback());
-    this->proxy->fetch_access_token_finish(co_await result, &error);
-    this->pkce = {};
-    if(error) {
-        // TODO: map GError to HTTP error code
-        auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
-        co_return error;
+    {
+        AsyncResult result;
+        peel::UniquePtr<glib::Error> error;
+        this->proxy->fetch_access_token_async(auth_code, this->pkce->get_verifier(), nullptr, result.callback());
+        this->proxy->fetch_access_token_finish(co_await result, &error);
+        this->pkce = {};
+        if(error) {
+            // TODO: map GError to HTTP error code
+            auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
+            co_return error;
+        }
     }
 
     // From this point forwards, OAuth2Proxy will add the access token as an
@@ -263,79 +261,87 @@ Task<void> ChatClient::Impl::authorize(peel::RefPtr<OneShotServer> auth_listener
     auth_listener->respond(soup::Status::OK, soup::MemoryUse::STATIC, success_response);
     g_message("Access token: %s\n", this->proxy->get_access_token());
     g_message("Refresh token: %s\n", this->proxy->get_refresh_token());
-    schedule_access_token_refresh();
     auto expiration = this->proxy->get_expiration_date();
     g_message("Token expiration: %s\n", expiration->format_iso8601().c_str());
+    auto error = co_await schedule_access_token_refresh();
 
     // TODO: seems like librest is treating some error responses as success. If we send an empty client
     //  secret, everything appears to succeed but the Bearer token is '(null)', causing API calls to fail
     co_return error;
 }
 
-void ChatClient::Impl::schedule_access_token_refresh()
+Task<void> ChatClient::Impl::schedule_access_token_refresh()
 {
+    ErrorPtr error;
     auto expiration = this->proxy->get_expiration_date();
     auto now = glib::DateTime::create_now_utc();
     // Refresh 2 minutes before the expiration date
     int64_t refresh_interval = expiration->difference(now) - 120000;
-    assert(refresh_interval >= 0);
-    // TODO: how to cancel these timeouts when client object is destroyed
-    glib::timeout_add((unsigned)refresh_interval, [this]() -> bool {
-        this->refresh_access_token_async().start();
-        return false;
-    });
+    if(refresh_interval <= 0) {
+        error = co_await this->refresh_access_token_async();
+    } else {
+        // TODO: how to cancel these timeouts when client object is destroyed
+        glib::timeout_add((unsigned)refresh_interval, [this]() -> bool {
+            this->refresh_access_token_async().start();
+            return false;
+        });
+    }
+    co_return error;
 }
 
 Task<void> ChatClient::Impl::refresh_access_token_async()
 {
-    ErrorPtr error;
     g_assert(this->is_authorized);
 
     AsyncResult result;
+    peel::UniquePtr<glib::Error> error;
+    // TODO: patch librest to include client_secret in refresh token request
+    //  (Google responds with "invalid_request", "client_secret is missing.")
+    //  Ref: https://discuss.google.dev/t/is-it-ok-to-put-a-client-secret-in-a-desktop-app/296820/4
     this->proxy->refresh_access_token_async(nullptr, result.callback());
     this->proxy->refresh_access_token_finish(co_await result, &error);
-    schedule_access_token_refresh();
+    if(!error) {
+        g_assert(!this->is_access_expired());
+        schedule_access_token_refresh().start();
+    }
     co_return error;
 }
 
 Task<void> ChatClient::connect_to_chat_async(const char* stream_url, gio::Cancellable* cancellable)
 {
-    ErrorPtr error;
-
     // Note: needs to stick around for the entirety of this function so there is enough time
     //  for the server to send a response back to the web browser
     peel::RefPtr<OneShotServer> auth_listener;
     if(!m_impl->is_authorized) {
         auth_listener = OneShotServer::create();
-        error = co_await m_impl->authorize(auth_listener);
+        auto error = co_await m_impl->authorize(auth_listener);
         if(error) {
             co_return error;
         }
     }
 
-    auto video_id = extract_video_id(stream_url, &error);
-    if(error) {
-        co_return error;
+    auto video_id = extract_video_id(stream_url);
+    if(!video_id.has_value()) {
+        co_return std::move(video_id.error());
     }
-    auto live_stream_info = co_await m_impl->get_live_stream_info_async(std::move(video_id), cancellable);
-    if(auto* error2 = std::get_if<ErrorPtr>(&live_stream_info)) {
-        co_return std::move(*error2);
+    auto live_stream_info = co_await m_impl->get_live_stream_info_async(std::move(*video_id), cancellable);
+    if(!live_stream_info.has_value()) {
+        co_return std::move(live_stream_info.error());
     }
     // Cache stream info
-    m_impl->stream_info = std::move(std::get<StreamInfo>(live_stream_info));
-    assert(m_impl->stream_info.live_chat_id);
+    m_impl->stream_info = std::move(*live_stream_info);
+    g_assert(m_impl->stream_info.live_chat_id);
     m_impl->fetch_messages_async(nullptr, 5000).start(); // 5000 = Default poll interval
 
-    co_return error;
+    co_return {};
 }
 
 Task<void> ChatClient::Impl::fetch_messages_async(peel::String next_page_token, guint poll_interval)
 {
     g_assert(this->is_authorized);
 
-    ErrorPtr error;
     if(this->is_access_expired()) {
-        error = co_await this->refresh_access_token_async();
+        auto error = co_await this->refresh_access_token_async();
         if(error) {
             co_return error;
         }
@@ -352,22 +358,25 @@ Task<void> ChatClient::Impl::fetch_messages_async(peel::String next_page_token, 
     }
     call->set_function("liveChat/messages");
 
-    AsyncResult result;
-    g_print("Poll interval: %u\n", poll_interval);
-    call->invoke_async(nullptr, result.callback());
-    call->invoke_finish(co_await result, &error);
-    if(error) {
-        // TODO: implement some kind of retry mechanism then give up
-        // Note: will try again using the last known polling interval
-        call_error_callback(error);
-        co_return error;
+    {
+        AsyncResult result;
+        peel::UniquePtr<glib::Error> error;
+        g_print("Poll interval: %u\n", poll_interval);
+        call->invoke_async(nullptr, result.callback());
+        call->invoke_finish(co_await result, &error);
+        if(error) {
+            // TODO: implement some kind of retry mechanism then give up
+            // Note: will try again using the last known polling interval
+            call_error_callback(error);
+            co_return error;
+        }
     }
     const char* response = call->get_payload();
     auto response_len = call->get_payload_length();
-    auto messages_info = parse_chat_messages(peel::ArrayRef{response, (guint)response_len}, &error);
-    if(error) {
-        call_error_callback(error);
-        co_return error;
+    auto messages_info = parse_chat_messages(peel::ArrayRef{response, (guint)response_len});
+    if(!messages_info.has_value()) {
+        call_error_callback(messages_info.error().get());
+        co_return std::move(messages_info.error());
     }
     if(!messages_info->messages.empty()) {
         // Notify all listeners that a new batch of messages has been received
@@ -416,44 +425,44 @@ char* build_server_error_response(const char* error_str)
 }
 
 static
-peel::String extract_video_id(const char* stream_url, ErrorPtr* error)
+std::expected<peel::String, ErrorPtr> extract_video_id(const char* stream_url)
 {
-    auto stream_uri = glib::Uri::parse(stream_url, glib::UriFlags::NONE, error);
-    if(*error) {
-        return nullptr;
+    peel::UniquePtr<glib::Error> error;
+    auto stream_uri = glib::Uri::parse(stream_url, glib::UriFlags::NONE, &error);
+    if(error) {
+        return std::unexpected(std::move(error));
     }
     const char* query = stream_uri->get_query();
-    auto params = glib::Uri::parse_params(query, strlen(query), "&", glib::UriParamsFlags::NONE, error);
-    if(*error) {
-        return nullptr;
+    auto params = glib::Uri::parse_params(query, strlen(query), "&", glib::UriParamsFlags::NONE, &error);
+    if(error) {
+        return std::unexpected(std::move(error));
     }
     auto* video_id = (const char*)glib::HashTable::lookup(params, "v");
     if(!video_id) {
-        *error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "Missing parameter in video URL");
-        return nullptr;
+        return std::unexpected(glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "Missing parameter in video URL"));
     }
     return video_id;
 }
 
 static
-peel::String get_random_string(ErrorPtr* error)
+std::expected<peel::String, ErrorPtr> get_random_string()
 {
     static const char alphabet[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
 
     peel::String result;
+    peel::UniquePtr<glib::Error> error;
     #if defined(G_OS_UNIX)
         auto urandom = gio::File::create_for_path("/dev/urandom");
-        auto rand_stream = urandom->read(nullptr, error);
-        if(*error) {
-            return result;
+        auto rand_stream = urandom->read(nullptr, &error);
+        if(error) {
+            return std::unexpected(std::move(error));
         }
         gsize bytes_read = 0;
         uint8_t* buffer = (uint8_t*)g_malloc(STATE_STR_LEN + 1);
         result = peel::String::adopt_string((char*)buffer);
-        rand_stream->read_all(peel::ArrayRef(buffer, STATE_STR_LEN), &bytes_read, nullptr, error);
-        if(*error) {
-            result = nullptr;
-            return result;
+        rand_stream->read_all(peel::ArrayRef(buffer, STATE_STR_LEN), &bytes_read, nullptr, &error);
+        if(error) {
+            return std::unexpected(std::move(error));
         }
     #elif defined(G_OS_WIN32)
         // TODO: test on Windows somehow
@@ -461,8 +470,9 @@ peel::String get_random_string(ErrorPtr* error)
         result = peel::String::adopt_string((char*)buffer);
         NTSTATUS status = BCryptGenRandom(NULL, buffer, STATE_STR_LEN, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
         if(status != STATUS_SUCCESS) {
-            *error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "Failed to read random data during OAuth authorization");
-            return result;
+            return std::unexpected(
+                ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Failed to read random data during OAuth authorization")
+            );
         }
     #else
         #error "The cryptographic random number generator API for this platform is not supported"

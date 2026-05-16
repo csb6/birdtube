@@ -57,15 +57,13 @@ peel::RefPtr<OneShotServer> OneShotServer::create()
 
 Task<peel::RefPtr<glib::HashTable>> OneShotServer::listen(unsigned port)
 {
-    peel::UniquePtr<glib::Error> error;
-
     ServerAsyncResult result;
+    peel::UniquePtr<glib::Error> error;
     this->server->add_handler("/", result.callback());
-
     // TODO: timeout for server?
     this->server->listen_local(port, soup::ServerListenOptions::IPV4_ONLY, &error);
     if(error) {
-        co_return error;
+        co_return std::unexpected(std::move(error));
     }
 
     co_await result;

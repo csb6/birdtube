@@ -19,8 +19,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <peel/GLib/MainLoop.h>
 #include <peel/GLib/MainContext.h>
 #include <peel/GLib/DateTime.h>
+#include <peel/GLib/Error.h>
 #include <peel/ArrayRef.h>
-#include <peel/UniquePtr.h>
 #include "youtube_types.hpp"
 #include "youtube_chat_client.hpp"
 #include <memory>
@@ -53,20 +53,19 @@ int main(int argc, char** argv)
     const char* expiration = g_environ_getenv(env.get(), "YT_EXPIRATION");
 
     const char* stream_url = argv[1];
-    peel::UniquePtr<glib::Error> error;
     peel::RefPtr<youtube::ChatClient> client;
     auto main_loop = glib::MainLoop::create(glib::MainContext::default_(), /*is_running=*/false);
 
     if(!access_token && !refresh_token && !expiration) {
         // Stream URL provided, but no existing access/refresh tokens (need to request authorization)
         client = youtube::ChatClient::create(client_id, client_secret);
-        auto auth_url = client->generate_auth_url(&error);
-        if(error) {
-            g_printerr("Failed to get OAuth authorization URL: %s\n", error->message);
+        auto auth_url = client->generate_auth_url();
+        if(!auth_url.has_value()) {
+            g_printerr("Failed to get OAuth authorization URL: %s\n", auth_url.error()->message);
             return 1;
         }
         // Launch OAuth authorization flow in web browser
-        char* cmd = g_strdup_printf("xdg-open \"%s\"", auth_url.c_str());
+        char* cmd = g_strdup_printf("xdg-open \"%s\"", auth_url->c_str());
         system(cmd);
         g_free(cmd);
     } else if(access_token && refresh_token && expiration) {

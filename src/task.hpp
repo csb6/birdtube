@@ -22,9 +22,10 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <exception>
 #include <type_traits>
 #include <coroutine>
-#include <variant>
+#include <expected>
 #include <peel/GLib/Error.h>
 #include <peel/UniquePtr.h>
+#include "error_wrapper.hpp"
 
 namespace peel {
     namespace GObject {
@@ -35,7 +36,6 @@ namespace peel {
     }
 }
 
-namespace glib = peel::GLib;
 namespace gio = peel::Gio;
 namespace gobject = peel::GObject;
 
@@ -75,8 +75,8 @@ template<typename T>
 class [[nodiscard]] Task : public awaiter_base {
 public:
     using ResultT = std::conditional_t<std::same_as<T, void>,
-        peel::UniquePtr<glib::Error>,
-        std::variant<T, peel::UniquePtr<glib::Error>>>;
+        ErrorPtr,
+        std::expected<T, ErrorPtr>>;
 
     struct promise_type : public promise_type_base {
         struct FinalAwaitable : public awaiter_base {

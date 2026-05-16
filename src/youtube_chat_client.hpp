@@ -23,13 +23,14 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <peel/Gio/Cancellable.h>
 #include <peel/class.h>
 #include <peel/RefPtr.h>
-#include <peel/UniquePtr.h>
 #include <peel/String.h>
 #include <peel/signal.h>
 #include <peel/property.h>
 #include <memory>
 #include <functional>
+#include <expected>
 #include "youtube_types.hpp"
+#include "error_wrapper.hpp"
 #include "task.hpp"
 
 namespace youtube {
@@ -46,7 +47,7 @@ public:
                                                       peel::RefPtr<glib::DateTime> access_token_expiration);
 
     void set_error_callback(ErrorCallback&&);
-    peel::String generate_auth_url(peel::UniquePtr<glib::Error>*);
+    std::expected<peel::String, ErrorPtr> generate_auth_url();
     Task<void> connect_to_chat_async(const char* stream_url, gio::Cancellable* cancellable);
     bool get_is_authorized() const;
 
