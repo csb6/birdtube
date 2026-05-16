@@ -2,7 +2,7 @@ id: im.pidgin.Purple3.Plugin.PurpleYoutube
 runtime: im.pidgin.Pidgin3
 runtime-version: default
 branch: default
-sdk: org.gnome.Sdk//48
+sdk: org.gnome.Sdk//50
 separate-locales: false
 build-extension: true
 build-options:
@@ -12,7 +12,7 @@ modules:
   - name: librest
     buildsystem: meson
     config-opts:
-      - "-Dintrospection=false"
+      - "-Dvapi=false"
       - "-Dexamples=false"
       - "-Dgtk_doc=false"
       - "-Dtests=false"
@@ -21,7 +21,11 @@ modules:
         url: https://gitlab.gnome.org/GNOME/librest/-/archive/0.10.2/librest-0.10.2.tar.gz
         sha256: adef677ecdbe16f94906f59f07519938a82a207b8c019e37f2d68463f94a464d
   - name: purple-youtube
-    buildsystem: meson
+    buildsystem: simple
+    build-commands:
+      - meson setup --reconfigure build
+      - ninja -C build peel-codegen
+      - ninja -C build
     sources:
       - type: dir
         path: .
