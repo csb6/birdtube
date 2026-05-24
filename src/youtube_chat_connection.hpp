@@ -20,6 +20,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <memory>
 #include <peel/class.h>
 #include <peel/RefPtr.h>
+#include <peel/UniquePtr.h>
+#include <peel/GLib/Error.h>
 #include <peel/Purple/Connection.h>
 #include <peel/Purple/Account.h>
 #include "youtube_types.hpp"
@@ -30,7 +32,9 @@ class Connection final : public purple::Connection {
     PEEL_SIMPLE_CLASS(Connection, purple::Connection)
 public:
     void init(Class*);
-    static peel::RefPtr<Connection> create(peel::RefPtr<purple::Account>);
+    static peel::RefPtr<Connection> create(peel::RefPtr<purple::Account>, peel::UniquePtr<glib::Error>*);
+
+    bool vfunc_connect(peel::UniquePtr<glib::Error>*);
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
