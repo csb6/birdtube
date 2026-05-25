@@ -44,7 +44,8 @@ purple_youtube = shared_library('purple-youtube', [
   dependencies: [gobject, libsoup, json, librest, gio, peel, purple, gplugin],
 )
 
-executable('yt-chat', ['src/main.cpp'],
+executable('yt-chat-demo', ['demo/demo.cpp'],
     dependencies: [gobject, peel],
+    include_directories: ['src'],
     link_with: [purple_youtube]
 )
