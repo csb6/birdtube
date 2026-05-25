@@ -16,8 +16,16 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "youtube_chat_connection.hpp"
+#include <peel/ArrayRef.h>
 #include <peel/Purple/AccountSettings.h>
+#include <peel/Purple/Contact.h>
+#include <peel/Purple/ContactManager.h>
+#include <peel/Purple/Conversation.h>
+#include <peel/Purple/ConversationManager.h>
+#include <peel/Purple/ConversationMembers.h>
+#include <peel/Purple/ConversationType.h>
 #include <peel/Purple/Core.h>
+#include <peel/Purple/Message.h>
 #include <peel/Purple/Ui.h>
 #include <peel/GLib/DateTime.h>
 #include "youtube_chat_client.hpp"
@@ -82,8 +90,34 @@ peel::RefPtr<Connection> Connection::create(peel::RefPtr<purple::Account> accoun
         // TODO: is there a better way to log errors?
         g_printerr("Error: %s\n", error->message);
     });
-    client->connect_new_messages([connection](youtube::ChatClient*, void*) {
-        // TODO
+    client->connect_new_messages([connection](youtube::ChatClient*, void* data) {
+        auto* account = connection->get_account();
+        auto* core = purple::Core::get_default();
+        auto* contact_manager = core->get_contact_manager();
+        auto* conversation_manager = core->get_conversation_manager();
+        auto* messages = static_cast<peel::ArrayRef<const youtube::ChatMessage>*>(data);
+        // TODO: can technically avoid re-fetching/resetting display_name property since not likely to
+        //  change during course of a chat
+        for(const auto& message : *messages) {
+            using ConvType = purple::ConversationType;
+
+            auto contact = contact_manager->find_or_create(account, message.channel_id.c_str(), nullptr);
+            contact->set_display_name(message.display_name.c_str());
+
+            // Note: also using channel ID as conversation ID
+            peel::RefPtr conversation = conversation_manager->find(
+                account, ConvType::CHANNEL, message.channel_id.c_str());
+            if(!conversation) {
+                conversation = purple::Conversation::create(account, ConvType::CHANNEL, message.channel_id.c_str());
+                conversation_manager->add(conversation);
+            }
+
+            auto author = conversation->get_members()->find_or_add_member(
+                contact, /*announce=*/false, /*message=*/"");
+            auto purple_msg = purple::Message::create(author, message.content.c_str());
+            purple_msg->set_timestamp(message.timestamp);
+            conversation->write_message(purple_msg);
+        }
     });
 
     return connection;
