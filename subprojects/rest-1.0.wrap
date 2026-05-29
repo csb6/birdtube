@@ -2,4 +2,4 @@
 url=https://gitlab.gnome.org/GNOME/librest.git
 revision=0.10.2
 depth=1
-diff_files = rest/0001-refresh-token-error.patch
+diff_files = rest/0001-refresh-token-error.patch, rest/0002-send-client-secret-on-refresh.patch

@@ -1,0 +1,105 @@
+From d3f895bcf6d12567ac9ccc0d9d49768345a5ac7e Mon Sep 17 00:00:00 2001
+From: Cole Blakley <cblakley15@gmail.com>
+Date: Mon, 25 May 2026 15:47:39 -0700
+Subject: [PATCH] Return an error if access token fails to be refreshed
+
+Also added new error codes that represent the standard OAuth
+error types
+
+diff --git a/rest/rest-oauth2-proxy.c b/rest/rest-oauth2-proxy.c
+index dd87bd9..78364a8 100644
+--- a/rest/rest-oauth2-proxy.c
++++ b/rest/rest-oauth2-proxy.c
+@@ -53,6 +53,8 @@ enum {
+   N_PROPS
+ };
+ 
++static RestOAuth2Error _rest_auth2_proxy_get_error_code (const char* error_code_str);
++
+ static GParamSpec *properties [N_PROPS];
+ 
+ static void
+@@ -89,6 +91,20 @@ rest_oauth2_proxy_parse_access_token (RestOAuth2Proxy *self,
+   root = json_parser_get_root (parser);
+   root_object = json_node_get_object (root);
+ 
++  if (json_object_has_member (root_object, "error")) {
++    char* error_msg = NULL;
++    const char* error_code_str = json_object_get_string_member (root_object, "error");
++    if (json_object_has_member (root_object, "error_description"))
++      error_msg = g_strdup_printf(": %s", json_object_get_string_member (root_object, "error_description"));
++
++    g_task_return_new_error (task,
++                             REST_OAUTH2_ERROR,
++                             _rest_auth2_proxy_get_error_code(error_code_str),
++                             "%s%s", error_code_str, error_msg ? error_msg : "");
++    g_free(error_msg);
++    return;
++  }
++
+   if (json_object_has_member (root_object, "access_token"))
+     rest_oauth2_proxy_set_access_token (self, json_object_get_string_member (root_object, "access_token"));
+   if (json_object_has_member (root_object, "refresh_token"))
+@@ -806,3 +822,34 @@ rest_oauth2_proxy_set_expiration_date (RestOAuth2Proxy *self,
+   priv->expiration_date = g_date_time_ref (expiration_date);
+   g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_EXPIRATION_DATE]);
+ }
++
++static RestOAuth2Error
++_rest_auth2_proxy_get_error_code (const char* error_code_str)
++{
++RestOAuth2Error error;
++
++if(g_strcmp0(error_code_str, "invalid_request") == 0)
++  error = REST_OAUTH2_ERROR_INVALID_REQUEST;
++else if(g_strcmp0(error_code_str, "unauthorized_client") == 0)
++  error = REST_OAUTH2_ERROR_UNAUTHORIZED_CLIENT;
++else if(g_strcmp0(error_code_str, "access_denied") == 0)
++  error = REST_OAUTH2_ERROR_ACCESS_DENIED;
++else if(g_strcmp0(error_code_str, "unsupported_response_type") == 0)
++  error = REST_OAUTH2_ERROR_UNSUPPORTED_RESPONSE_TYPE;
++else if(g_strcmp0(error_code_str, "invalid_scope") == 0)
++  error = REST_OAUTH2_ERROR_INVALID_SCOPE;
++else if(g_strcmp0(error_code_str, "server_error") == 0)
++  error = REST_OAUTH2_ERROR_SERVER_ERROR;
++else if(g_strcmp0(error_code_str, "temporarily_unavailable") == 0)
++  error = REST_OAUTH2_ERROR_TEMPORARILY_UNAVAILABLE;
++else if(g_strcmp0(error_code_str, "invalid_client") == 0)
++  error = REST_OAUTH2_ERROR_INVALID_CLIENT;
++else if(g_strcmp0(error_code_str, "invalid_grant") == 0)
++  error = REST_OAUTH2_ERROR_INVALID_GRANT;
++else if(g_strcmp0(error_code_str, "unsupported_grant_type") == 0)
++  error = REST_OAUTH2_ERROR_UNSUPPORTED_GRANT_TYPE;
++else
++  error = REST_OAUTH2_ERROR_OTHER;
++
++return error;
++}
+diff --git a/rest/rest-oauth2-proxy.h b/rest/rest-oauth2-proxy.h
+index 71651ca..9c9a1e2 100644
+--- a/rest/rest-oauth2-proxy.h
++++ b/rest/rest-oauth2-proxy.h
+@@ -40,6 +40,20 @@ struct _RestOAuth2ProxyClass
+ typedef enum {
+   REST_OAUTH2_ERROR_NO_REFRESH_TOKEN,
+   REST_OAUTH2_ERROR_ACCESS_TOKEN_EXPIRED,
++
++  // RFC 6749 error codes
++  REST_OAUTH2_ERROR_INVALID_REQUEST,
++  REST_OAUTH2_ERROR_UNAUTHORIZED_CLIENT,
++  REST_OAUTH2_ERROR_ACCESS_DENIED,
++  REST_OAUTH2_ERROR_UNSUPPORTED_RESPONSE_TYPE,
++  REST_OAUTH2_ERROR_INVALID_SCOPE,
++  REST_OAUTH2_ERROR_SERVER_ERROR,
++  REST_OAUTH2_ERROR_TEMPORARILY_UNAVAILABLE,
++  REST_OAUTH2_ERROR_INVALID_CLIENT,
++  REST_OAUTH2_ERROR_INVALID_GRANT,
++  REST_OAUTH2_ERROR_UNSUPPORTED_GRANT_TYPE,
++
++  REST_OAUTH2_ERROR_OTHER,
+ } RestOAuth2Error;
+ 
+ #define REST_OAUTH2_ERROR (rest_oauth2_error_quark())
+-- 
+2.47.3
+

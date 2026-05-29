@@ -1,4 +1,5 @@
 build/
 .cache/
 run.sh
-subprojects/*/
+subprojects/rest-1.0/
+subprojects/peel/
