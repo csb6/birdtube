@@ -7,7 +7,6 @@ separate-locales: false
 build-extension: true
 build-options:
   prefix: /app/3rd-party/PurpleYoutube
-  append-pkg-config-path: /app/3rd-party/PurpleYoutube/lib/pkgconfig
 modules:
   - name: librest
     buildsystem: meson
@@ -21,11 +20,7 @@ modules:
         url: https://gitlab.gnome.org/GNOME/librest/-/archive/0.10.2/librest-0.10.2.tar.gz
         sha256: adef677ecdbe16f94906f59f07519938a82a207b8c019e37f2d68463f94a464d
   - name: purple-youtube
-    buildsystem: simple
-    build-commands:
-      - meson setup --reconfigure build
-      - ninja -C build peel-codegen
-      - ninja -C build
+    buildsystem: meson
     sources:
       - type: dir
         path: .

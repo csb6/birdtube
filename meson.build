@@ -19,7 +19,7 @@ gplugin = dependency('gplugin', required: true)
 peel = dependency('peel', required: true)
 
 peel_gen = find_program('peel-gen')
-custom_target('peel-codegen',
+peel_codegen = custom_target('peel-codegen',
   command: [
     peel_gen,
     '--recursive',
@@ -30,12 +30,14 @@ custom_target('peel-codegen',
     'Purple', '3.0',
   ],
   input: 'src/api-tweaks.txt',
-  output: 'peel-codegen',
+  output: ['peel'],
   env: {
-    'GI_GIR_PATH': '/usr/lib/x86_64-linux-gnu/gir-1.0:/app/3rd-party/PurpleYoutube/share/gir-1.0:subprojects/rest-1.0/rest'
+    'GI_GIR_PATH': 'subprojects/rest-1.0/rest:/usr/lib/x86_64-linux-gnu/gir-1.0:/app/3rd-party/PurpleYoutube/share/gir-1.0'
   },
   depends: [librest_gir],
 )
+
+plugin_install_dir = get_option('prefix') / get_option('libdir') / 'purple-3'
 
 purple_youtube = shared_library('purple-youtube', [
     'src/youtube_chat_plugin.cpp',
@@ -43,12 +45,18 @@ purple_youtube = shared_library('purple-youtube', [
     'src/youtube_chat_client.cpp',
     'src/youtube_chat_parser.cpp',
     'src/one_shot_server.cpp',
+    peel_codegen
   ],
   cpp_pch: 'src/pch/pch.hpp',
-  dependencies: [gobject, libsoup, json, librest, gio, peel, purple, gplugin],
+  dependencies: [gobject, libsoup, json, librest, gio, purple, gplugin, peel],
+  install: true,
+  install_dir: plugin_install_dir,
 )
 
-executable('yt-chat-demo', ['demo/demo.cpp'],
+executable('yt-chat-demo', [
+      'demo/demo.cpp',
+      peel_codegen
+    ],
     dependencies: [gobject, peel],
     include_directories: ['src'],
     link_with: [purple_youtube]
