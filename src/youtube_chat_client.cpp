@@ -171,6 +171,11 @@ bool ChatClient::get_is_authorized() const
     return m_impl->is_authorized;
 }
 
+const char* ChatClient::get_title() const
+{
+    return m_impl->stream_info.title;
+}
+
 void ChatClient::set_error_callback(ErrorCallback&& callback)
 {
     m_impl->error_callback = std::move(callback);
