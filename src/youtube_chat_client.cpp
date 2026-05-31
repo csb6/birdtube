@@ -203,41 +203,6 @@ std::expected<peel::String, ErrorPtr> ChatClient::generate_auth_url()
     return m_impl->proxy->build_authorization_url(m_impl->pkce->get_challenge(), YOUTUBE_API_SCOPE, &m_impl->state_str);
 }
 
-Task<StreamInfo> ChatClient::Impl::get_live_stream_info_async(peel::String video_id, gio::Cancellable* cancellable)
-{
-    if(!this->is_authorized) {
-        co_return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Client is not authorized to make API calls"));
-    }
-    if(this->is_access_expired()) {
-        auto error = co_await this->refresh_access_token_async();
-        if(error) {
-            co_return std::unexpected(error);
-        }
-    }
-    auto call = this->proxy->new_call();
-    call->add_param("part", "snippet,liveStreamingDetails");
-    call->add_param("fields", "items(snippet(title),liveStreamingDetails(activeLiveChatId))");
-    call->add_param("id", video_id);
-    call->set_function("videos");
-
-    {
-        AsyncResult result;
-        peel::UniquePtr<glib::Error> error;
-        call->invoke_async(cancellable, result.callback());
-        call->invoke_finish(co_await result, &error);
-        if(error) {
-            co_return std::unexpected(std::move(error));
-        }
-    }
-    const char* response = call->get_payload();
-    auto response_len = call->get_payload_length();
-    auto stream_info = parse_stream_info(peel::ArrayRef{response, (guint)response_len});
-    if(!stream_info.has_value()) {
-        co_return std::unexpected(std::move(stream_info.error()));
-    }
-    co_return std::move(stream_info.value());
-}
-
 Task<void> ChatClient::Impl::authorize(peel::RefPtr<OneShotServer> auth_listener)
 {
     static const uint8_t success_response[] =
@@ -383,6 +348,41 @@ Task<void> ChatClient::connect_to_chat_async(const char* stream_url, gio::Cancel
     m_impl->fetch_messages_async(nullptr, 5000).start(); // 5000 = Default poll interval
 
     co_return {};
+}
+
+Task<StreamInfo> ChatClient::Impl::get_live_stream_info_async(peel::String video_id, gio::Cancellable* cancellable)
+{
+    if(!this->is_authorized) {
+        co_return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Client is not authorized to make API calls"));
+    }
+    if(this->is_access_expired()) {
+        auto error = co_await this->refresh_access_token_async();
+        if(error) {
+            co_return std::unexpected(error);
+        }
+    }
+    auto call = this->proxy->new_call();
+    call->add_param("part", "snippet,liveStreamingDetails");
+    call->add_param("fields", "items(snippet(title),liveStreamingDetails(activeLiveChatId))");
+    call->add_param("id", video_id);
+    call->set_function("videos");
+
+    {
+        AsyncResult result;
+        peel::UniquePtr<glib::Error> error;
+        call->invoke_async(cancellable, result.callback());
+        call->invoke_finish(co_await result, &error);
+        if(error) {
+            co_return std::unexpected(std::move(error));
+        }
+    }
+    const char* response = call->get_payload();
+    auto response_len = call->get_payload_length();
+    auto stream_info = parse_stream_info(peel::ArrayRef{response, (guint)response_len});
+    if(!stream_info.has_value()) {
+        co_return std::unexpected(std::move(stream_info.error()));
+    }
+    co_return std::move(stream_info.value());
 }
 
 Task<void> ChatClient::send_message_async(const char* message)
