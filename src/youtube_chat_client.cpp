@@ -17,6 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "youtube_chat_client.hpp"
 #include <peel/Rest/OAuth2Proxy.h>
+#include <peel/Rest/OAuth2ProxyCall.h>
 #include <peel/Rest/PkceCodeChallenge.h>
 #include <peel/Soup/Logger.h>
 #include <peel/Soup/LoggerLogLevel.h>
@@ -36,6 +37,48 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "error_wrapper.hpp"
 
 G_DEFINE_QUARK(youtube-chat-error-quark, youtube_chat_error)
+
+/* Oauth2ProxyCall that serializes a JSON string and adds query parameter "part=snippet" */
+class JsonSnippetPoster final : public rest::OAuth2ProxyCall {
+    PEEL_SIMPLE_CLASS(JsonSnippetPoster, rest::OAuth2ProxyCall)
+public:
+    void init(Class*) {}
+    static peel::RefPtr<JsonSnippetPoster> create(peel::RefPtr<rest::OAuth2Proxy> proxy, peel::String json_str)
+    {
+        // Have to copy proxy into a rest::Proxy object to avoid ambiguous call
+        auto obj = Object::create<JsonSnippetPoster>(prop_proxy(), peel::RefPtr<rest::Proxy>{proxy});
+        obj->set_method("POST");
+        obj->json_str = std::move(json_str);
+        // Have add Auth header here because it is normally done in proxy->new_call(), not
+        // in constructor of rest::OAuth2ProxyCall, so it is not an inherited behavior
+        auto* auth_str = g_strdup_printf("Bearer %s", proxy->get_access_token());
+        obj->add_header("Authorization", auth_str);
+        g_free(auth_str);
+        return obj;
+    }
+
+    bool vfunc_serialize_params(peel::String* content_type,
+                                peel::String* content, gsize* content_len,
+                                peel::UniquePtr<glib::Error>*)
+    {
+        content_type->set("application/json");
+        auto* function = g_strdup_printf("%s?part=snippet", this->get_function());
+        this->set_function(function);
+        g_free(function);
+        *content = std::move(json_str);
+        *content_len = strlen(content->c_str());
+        return true;
+    }
+private:
+    peel::String json_str;
+};
+
+PEEL_CLASS_IMPL(JsonSnippetPoster, "JsonSnippetPoster", rest::OAuth2ProxyCall);
+
+void JsonSnippetPoster::Class::init()
+{
+    override_vfunc_serialize_params<JsonSnippetPoster>();
+}
 
 namespace youtube {
 
@@ -294,9 +337,6 @@ Task<void> ChatClient::Impl::refresh_access_token_async()
 
     AsyncResult result;
     peel::UniquePtr<glib::Error> error;
-    // TODO: patch librest to include client_secret in refresh token request
-    //  (Google responds with "invalid_request", "client_secret is missing.")
-    //  Ref: https://discuss.google.dev/t/is-it-ok-to-put-a-client-secret-in-a-desktop-app/296820/4
     this->proxy->refresh_access_token_async(nullptr, result.callback());
     this->proxy->refresh_access_token_finish(co_await result, &error);
     if(!error) {
@@ -340,10 +380,30 @@ Task<void> ChatClient::connect_to_chat_async(const char* stream_url, gio::Cancel
     co_return {};
 }
 
+Task<void> ChatClient::send_message_async(const char* message)
+{
+    g_assert(m_impl->is_authorized);
+    if(m_impl->is_access_expired()) {
+        auto error = co_await m_impl->refresh_access_token_async();
+        if(error) {
+            co_return error;
+        }
+    }
+
+    auto message_json_str = create_text_message(m_impl->stream_info.live_chat_id, message);
+    auto call = JsonSnippetPoster::create(m_impl->proxy, std::move(message_json_str));
+    call->set_function("liveChat/messages");
+
+    AsyncResult result;
+    peel::UniquePtr<glib::Error> error;
+    call->invoke_async(nullptr, result.callback());
+    call->invoke_finish(co_await result, &error);
+    co_return error;
+}
+
 Task<void> ChatClient::Impl::fetch_messages_async(peel::String next_page_token, guint poll_interval)
 {
     g_assert(this->is_authorized);
-
     if(this->is_access_expired()) {
         auto error = co_await this->refresh_access_token_async();
         if(error) {

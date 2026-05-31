@@ -17,6 +17,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "youtube_chat_parser.hpp"
 #include <optional>
+#include <peel/Json/Json.h>
+#include <peel/Json/Builder.h>
 #include <peel/Json/Parser.h>
 #include <peel/Json/Node.h>
 #include <peel/Json/Path.h>
@@ -93,6 +95,27 @@ std::expected<ResponseInfo, ErrorPtr> parse_chat_messages(peel::ArrayRef<const c
         }
     }
     return result;
+}
+
+peel::String create_text_message(const char* live_chat_id, const char* message)
+{
+    auto builder = json::Builder::create_immutable();
+    builder->begin_object();
+        builder->set_member_name("snippet");
+        builder->begin_object();
+            builder->set_member_name("liveChatId");
+            builder->add_string_value(live_chat_id);
+            builder->set_member_name("type");
+            builder->add_string_value("textMessageEvent");
+            builder->set_member_name("textMessageDetails");
+            builder->begin_object();
+                builder->set_member_name("messageText");
+                builder->add_string_value(message);
+            builder->end_object();
+        builder->end_object();
+    builder->end_object();
+    auto root = builder->get_root();
+    return json::to_string(root, /*pretty=*/true);
 }
 
 static

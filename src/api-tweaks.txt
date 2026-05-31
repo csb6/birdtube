@@ -7,6 +7,7 @@ unowned rest_oauth2_proxy_get_expiration_date return
 
 # json-glib
 skip json_parser_has_assignment
+skip JsonSerializable
 
 # libpurple
 #  These cause codegen errors

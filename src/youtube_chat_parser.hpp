@@ -38,4 +38,6 @@ std::expected<StreamInfo, ErrorPtr> parse_stream_info(peel::ArrayRef<const char>
 
 std::expected<ResponseInfo, ErrorPtr> parse_chat_messages(peel::ArrayRef<const char> response);
 
+peel::String create_text_message(const char* live_chat_id, const char* message);
+
 } // namespace youtube
