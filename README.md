@@ -7,6 +7,15 @@ This is an unofficial plugin not affiliated with or endorsed by either Pidgin or
 
 **Note**: Pidgin 3 and this plugin are currently alpha software and are not currently meant for non-techical users.
 
+## Dependencies
+
+- [GObject](https://docs.gtk.org/gobject/)
+- [GLib](https://docs.gtk.org/glib/)
+- [Libsoup](https://libsoup.gnome.org/libsoup-3.0/)
+- Purple 3 (Pidgin is a graphical frontend for this library)
+- [Librest](https://gitlab.gnome.org/GNOME/librest) (will be automatically cloned as a subproject)
+- [Peel](https://gitlab.gnome.org/bugaevc/peel) (will be automatically cloned as a subproject)
+
 ## Building
 
 There are two ways to build the plugin: Meson or Flatpak. Both require you to clone this repository.
