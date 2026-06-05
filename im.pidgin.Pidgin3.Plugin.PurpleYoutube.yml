@@ -8,17 +8,6 @@ build-extension: true
 build-options:
   prefix: /app/3rd-party/PurpleYoutube
 modules:
-  - name: librest
-    buildsystem: meson
-    config-opts:
-      - "-Dvapi=false"
-      - "-Dexamples=false"
-      - "-Dgtk_doc=false"
-      - "-Dtests=false"
-    sources:
-      - type: archive
-        url: https://gitlab.gnome.org/GNOME/librest/-/archive/0.10.2/librest-0.10.2.tar.gz
-        sha256: adef677ecdbe16f94906f59f07519938a82a207b8c019e37f2d68463f94a464d
   - name: purple-youtube
     buildsystem: meson
     sources:
