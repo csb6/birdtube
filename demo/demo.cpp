@@ -95,13 +95,12 @@ int main(int argc, char** argv)
         }
     });
 
-    auto main_task = [main_loop, client, stream_url]() -> Task<void> {
+    auto main_task = [main_loop, client, stream_url]() -> VoidTask {
         auto error = co_await client->connect_to_chat_async(stream_url, nullptr);
         if(error) {
             g_printerr("Error: %s\n", error->message);
             main_loop->quit();
         }
-        co_return {};
     };
     main_task().start();
     main_loop->run();

@@ -130,3 +130,36 @@ private:
     std::coroutine_handle<promise_type> handle;
     ResultT result;
 };
+
+class [[nodiscard]] VoidTask {
+public:
+    struct promise_type {
+        struct FinalAwaitable : public awaiter_base {
+            void await_suspend(std::coroutine_handle<promise_type> handle) const noexcept
+            {
+                handle.destroy();
+            }
+        };
+        constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
+        constexpr FinalAwaitable final_suspend() noexcept { return {}; }
+        VoidTask get_return_object()
+        {
+            return VoidTask{std::coroutine_handle<promise_type>::from_promise(*this)};
+        }
+        void return_void() {}
+        void unhandled_exception() { std::terminate(); }
+    };
+
+    VoidTask(const VoidTask&) = delete;
+    VoidTask(VoidTask&&) = delete;
+    VoidTask& operator=(const VoidTask&) = delete;
+    VoidTask& operator=(VoidTask&&) = delete;
+
+    void start() { handle.resume(); }
+private:
+    explicit
+    VoidTask(std::coroutine_handle<promise_type> handle)
+        : handle(handle) {}
+
+    std::coroutine_handle<promise_type> handle;
+};
