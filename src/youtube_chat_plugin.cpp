@@ -19,12 +19,17 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <glib-object.h>
 #include <gplugin.h>
 #include <gplugin-native.h>
+#include <peel/Gio/Task.h>
 #include <peel/Purple/Account.h>
+#include <peel/Purple/Conversation.h>
+#include <peel/Purple/ConversationManager.h>
+#include "peel/Purple/ConversationType.h"
 #include <peel/Purple/Core.h>
 #include <peel/Purple/ChannelJoinDetails.h>
 #include <peel/Purple/Protocol.h>
 #include <peel/Purple/ProtocolManager.h>
 #include <peel/Purple/ProtocolConversation.h>
+#include "task.hpp"
 #include "youtube_chat_connection.hpp"
 #include "youtube_error.h"
 
@@ -41,14 +46,36 @@ public:
     static void init_interface(purple::ProtocolConversation::Iface* iface)
     {
         iface->override_vfunc_get_channel_join_details<Protocol>();
-        // TODO: unsupported currently in peel
-        //iface->override_vfunc_join_channel_async<Protocol>();
-        //iface->override_vfunc_join_channel_finish<Protocol>();
+        iface->override_vfunc_refresh<Protocol>();
+        // TODO: unsupported currently in peel. Overriding manually for now
+        auto* iface_class = reinterpret_cast<PurpleProtocolConversationInterface*>(iface);
+        iface_class->join_channel_async =
+            [](PurpleProtocolConversation* protocol, PurpleAccount* account, PurpleChannelJoinDetails* details,
+               GCancellable* cancellable, GAsyncReadyCallback callback, gpointer data) {
+                auto* self = reinterpret_cast<youtube::Protocol*>(protocol);
+                auto* task = reinterpret_cast<gio::Task*>(g_task_new(protocol, cancellable, callback, data));
+                auto* _peel_account = reinterpret_cast<purple::Account*>(account);
+                auto* _peel_details = reinterpret_cast<purple::ChannelJoinDetails*>(details);
+                auto* _peel_cancellable = reinterpret_cast<gio::Cancellable*>(cancellable);
+                [](youtube::Protocol* self,
+                   purple::Account* account, purple::ChannelJoinDetails* details,
+                   gio::Cancellable* cancellable, gio::Task* task) -> VoidTask {
+                        auto conversation = co_await self->vfunc_join_channel_async(account, details, cancellable);
+                        if(!conversation.has_value()) {
+                            task->return_error(conversation.error()->copy());
+                            co_return;
+                        }
+                        task->return_pointer(std::move(conversation.value()).release_ref(), g_object_unref);
+                }(self, _peel_account, _peel_details, _peel_cancellable, task).start();
+            };
+        iface_class->join_channel_finish =
+            [](PurpleProtocolConversation*, GAsyncResult* result, GError** error) {
+                return (PurpleConversation*)g_task_propagate_pointer(G_TASK(result), error);
+            };
         //iface->override_vfunc_leave_conversation_async<Protocol>();
         //iface->override_vfunc_leave_conversation_finish<Protocol>();
         //iface->override_vfunc_send_message_async<Protocol>();
         //iface->override_vfunc_send_message_finish<Protocol>();
-        iface->override_vfunc_refresh<Protocol>();
     }
 
     void init(Class*) {}
@@ -78,6 +105,30 @@ public:
             /*nickname_supported=*/false, /*nickname_max_length=*/0,
             /*password_supported=*/false, /*password_max_length=*/0
         );
+    }
+
+    Task<peel::RefPtr<purple::Conversation>> vfunc_join_channel_async(
+        purple::Account* account, purple::ChannelJoinDetails*, gio::Cancellable*)
+    {
+        using ConvType = purple::ConversationType;
+
+        auto* connection = static_cast<youtube::Connection*>(account->get_connection());
+        auto error = co_await connection->connect_async();
+        if(error) {
+            co_return std::unexpected(std::move(error));
+        }
+        auto* conversation_manager = purple::Core::get_default()->get_conversation_manager();
+        auto channel_id = connection->get_channel_id();
+        if(auto* conversation = conversation_manager->find(account, ConvType::CHANNEL, channel_id)) {
+            conversation->set_title(connection->get_title());
+            co_return conversation;
+        }
+
+        auto conversation = purple::Conversation::create(account, ConvType::CHANNEL, channel_id);
+        conversation->set_online(false);
+        conversation->set_title(connection->get_title());
+        conversation_manager->add(conversation);
+        co_return {};
     }
 
     void vfunc_refresh(purple::Conversation*)

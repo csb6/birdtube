@@ -19,12 +19,14 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <memory>
 #include <peel/class.h>
+#include <peel/String.h>
 #include <peel/RefPtr.h>
 #include <peel/UniquePtr.h>
 #include <peel/GLib/Error.h>
 #include <peel/Purple/Connection.h>
 #include <peel/Purple/Account.h>
 #include "youtube_types.hpp"
+#include "task.hpp"
 
 namespace youtube {
 
@@ -35,6 +37,10 @@ public:
     static peel::RefPtr<Connection> create(peel::RefPtr<purple::Account>, peel::UniquePtr<glib::Error>*);
 
     bool vfunc_connect(peel::UniquePtr<glib::Error>*);
+    Task<void> connect_async();
+
+    peel::String get_channel_id();
+    peel::String get_title();
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
