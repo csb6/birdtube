@@ -128,7 +128,7 @@ public:
         conversation->set_online(false);
         conversation->set_title(connection->get_title());
         conversation_manager->add(conversation);
-        co_return {};
+        co_return conversation;
     }
 
     void vfunc_refresh(purple::Conversation*)
