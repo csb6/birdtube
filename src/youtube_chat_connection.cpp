@@ -17,6 +17,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "youtube_chat_connection.hpp"
 #include <peel/ArrayRef.h>
+#include <peel/Gio/Cancellable.h>
+#include <peel/Gio/Task.h>
 #include <peel/Purple/AccountSettings.h>
 #include <peel/Purple/Contact.h>
 #include <peel/Purple/ContactManager.h>
@@ -42,7 +44,20 @@ struct Connection::Impl {
 
 void Connection::Class::init()
 {
-    override_vfunc_connect<Connection>();
+    auto* klass = reinterpret_cast<PurpleConnectionClass*>(this);
+    klass->connect_async = [](PurpleConnection* connection, GCancellable* cancellable,
+                              GAsyncReadyCallback callback, gpointer data) {
+        auto* self = reinterpret_cast<youtube::Connection*>(connection);
+        auto* task = reinterpret_cast<gio::Task*>(g_task_new(connection, cancellable, callback, data));
+        auto* _peel_cancellable = reinterpret_cast<gio::Cancellable*>(cancellable);
+        [](youtube::Connection* self, gio::Cancellable* cancellable, gio::Task* task) -> VoidTask {
+            auto result = co_await self->vfunc_connect_async(cancellable);
+            task->return_error(result->copy());
+        }(self, _peel_cancellable, task).start();
+    };
+    klass->connect_finish = [](PurpleConnection*, GAsyncResult* result, GError** error) {
+        return g_task_propagate_boolean(G_TASK(result), error);
+    };
 }
 
 void Connection::init(Class*)
@@ -113,13 +128,7 @@ peel::RefPtr<Connection> Connection::create(peel::RefPtr<purple::Account> accoun
     return connection;
 }
 
-bool Connection::vfunc_connect(peel::UniquePtr<glib::Error>*)
-{
-    connect_async().start();
-    return true;
-}
-
-Task<void> Connection::connect_async()
+Task<void> Connection::vfunc_connect_async(gio::Cancellable*)
 {
     // Authorize client if needed
     auto* account = this->get_account();

@@ -127,12 +127,12 @@ public:
     }
 
     Task<peel::RefPtr<purple::Conversation>> vfunc_join_channel_async(
-        purple::Account* account, purple::ChannelJoinDetails*, gio::Cancellable*)
+        purple::Account* account, purple::ChannelJoinDetails*, gio::Cancellable* cancellable)
     {
         using ConvType = purple::ConversationType;
 
         auto* connection = static_cast<youtube::Connection*>(account->get_connection());
-        auto error = co_await connection->connect_async();
+        auto error = co_await connection->vfunc_connect_async(cancellable);
         if(error) {
             co_return std::unexpected(std::move(error));
         }
