@@ -30,6 +30,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 namespace youtube {
 
+/* Represents a YouTube Live Chat connection */
 class Connection final : public purple::Connection {
     PEEL_DYNAMIC_CLASS(Connection, purple::Connection)
 public:

@@ -52,6 +52,9 @@ struct promise_type_base {
     std::coroutine_handle<> caller = std::noop_coroutine();
 };
 
+/* Represents the result of a GLib-style async operation. Suspends coroutine
+   when *_async() function is called; when resumed, call the *_finish function
+   on the return value of the await expression. */
 class AsyncResult {
 public:
     constexpr bool await_ready() const noexcept { return false; }
@@ -71,6 +74,9 @@ private:
     gio::AsyncResult* result = nullptr;
 };
 
+/* Async task that represents a GLib-style async callback. Does not own the coroutine frame;
+   frame is only destroyed when the callback completes. Always has option to return a GError
+   (even if T = void) */
 template<typename T>
 class [[nodiscard]] Task : public awaiter_base {
 public:
@@ -131,6 +137,8 @@ private:
     ResultT result;
 };
 
+/* Simple version of Task<T> that returns nothing (not even an error) and cannot itself be awaited.
+   Suitable for top level coroutines that start off async operations */
 class [[nodiscard]] VoidTask {
 public:
     struct promise_type {

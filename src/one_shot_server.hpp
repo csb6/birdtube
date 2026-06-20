@@ -31,6 +31,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 namespace gobject = peel::GObject;
 namespace soup = peel::Soup;
 
+/* Server that listens for a single HTTP request on the given port, sends a single
+   response, and then is destroyed */
 class OneShotServer final : public gobject::Object {
     PEEL_SIMPLE_CLASS(OneShotServer, Object)
 public:

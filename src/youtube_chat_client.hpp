@@ -35,6 +35,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 namespace youtube {
 
+/* Manages a YouTube Live Chat connection. Low-level/does not depend on libpurple */
 class ChatClient final : public gobject::Object {
     PEEL_SIMPLE_CLASS(ChatClient, Object)
 public:
