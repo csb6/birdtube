@@ -127,7 +127,7 @@ peel::RefPtr<Connection> Connection::create(peel::RefPtr<purple::Account> accoun
     return connection;
 }
 
-Task<void> Connection::vfunc_connect_async(gio::Cancellable*)
+Task<void> Connection::vfunc_connect_async(gio::Cancellable* cancellable)
 {
     // Authorize client if needed
     auto* account = this->get_account();
@@ -141,7 +141,7 @@ Task<void> Connection::vfunc_connect_async(gio::Cancellable*)
         // Open URL in user's browser so that they can begin the OAuth flow
         auto* ui = purple::Core::get_default()->get_ui();
         AsyncResult result;
-        ui->open_uri(url->c_str(), nullptr, result.callback());
+        ui->open_uri(url->c_str(), cancellable, result.callback());
         ui->open_uri_finish(co_await result, &error);
         if(error) {
             account->disconnect_with_error("Failed to open OAuth URL in browser", error);
@@ -158,7 +158,7 @@ Task<void> Connection::vfunc_connect_async(gio::Cancellable*)
     // Connect to the YouTube stream
     auto* settings = account->get_settings();
     const char* stream_url = settings->get_string("stream_url", "");
-    auto error = co_await m_impl->client->connect_to_chat_async(stream_url, nullptr);
+    auto error = co_await m_impl->client->connect_to_chat_async(stream_url, cancellable);
     if(error) {
         account->disconnect_with_error("Failed to connect to live chat", error.get());
     }
