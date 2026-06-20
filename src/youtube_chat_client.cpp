@@ -104,7 +104,6 @@ PEEL_CLASS_IMPL(ChatClient, "YoutubeChatClient", gobject::Object)
 struct ChatClient::Impl {
     void call_error_callback(glib::Error*);
     // Operations
-    Task<void> authorize(peel::RefPtr<OneShotServer> auth_listener);
     Task<void> schedule_access_token_refresh();
     Task<void> refresh_access_token_async();
     Task<StreamInfo> get_live_stream_info_async(peel::String video_id, gio::Cancellable*);
@@ -203,7 +202,7 @@ std::expected<peel::String, ErrorPtr> ChatClient::generate_auth_url()
     return m_impl->proxy->build_authorization_url(m_impl->pkce->get_challenge(), YOUTUBE_API_SCOPE, &m_impl->state_str);
 }
 
-Task<void> ChatClient::Impl::authorize(peel::RefPtr<OneShotServer> auth_listener)
+Task<void> ChatClient::authorize()
 {
     static const uint8_t success_response[] =
         "<!DOCTYPE html>"
@@ -216,39 +215,40 @@ Task<void> ChatClient::Impl::authorize(peel::RefPtr<OneShotServer> auth_listener
           "</body>"
         "</html>";
 
-    if(!this->pkce || !this->state_str) {
+    if(!m_impl->pkce || !m_impl->state_str) {
         co_return ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "No OAuth flow in-progress - call generate_auth_url first");
     }
 
     // First, wait for the server's message and determine if we are authorized
+    auto auth_listener = OneShotServer::create();
     auto auth_response = co_await auth_listener->listen(REDIRECT_PORT);
     if(!auth_response.has_value()) {
-        this->pkce = {};
-        this->state_str = {};
+        m_impl->pkce = {};
+        m_impl->state_str = {};
         co_return std::move(auth_response.error());
     }
     auto* error_str = (const char*)glib::HashTable::lookup(*auth_response, "error");
     if(error_str) {
         ErrorPtr error(YOUTUBE_CHAT_ERROR, 1, "OAuth redirect error: %s", error_str);
-        auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
-        this->pkce = {};
-        this->state_str = {};
+        co_await auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
+        m_impl->pkce = {};
+        m_impl->state_str = {};
         co_return error;
     }
     auto* auth_code = (const char*)glib::HashTable::lookup(*auth_response, "code");
     if(!auth_code) {
         ErrorPtr error(YOUTUBE_CHAT_ERROR, 1, "OAuth redirect error: Missing auth code");
-        auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
-        this->pkce = {};
-        this->state_str = {};
+        co_await auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
+        m_impl->pkce = {};
+        m_impl->state_str = {};
         co_return error;
     }
     auto* received_state_str = (const char*)glib::HashTable::lookup(*auth_response, "state");
-    auto expected_state_str = std::move(this->state_str);
+    auto expected_state_str = std::move(m_impl->state_str);
     if(!received_state_str || strcmp(received_state_str, expected_state_str) != 0) {
         ErrorPtr error(YOUTUBE_CHAT_ERROR, 1, "OAuth redirect error: Missing/incorrect state string");
-        auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
-        this->pkce = {};
+        co_await auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
+        m_impl->pkce = {};
         co_return error;
     }
 
@@ -256,26 +256,29 @@ Task<void> ChatClient::Impl::authorize(peel::RefPtr<OneShotServer> auth_listener
     {
         AsyncResult result;
         peel::UniquePtr<glib::Error> error;
-        this->proxy->fetch_access_token_async(auth_code, this->pkce->get_verifier(), nullptr, result.callback());
-        this->proxy->fetch_access_token_finish(co_await result, &error);
-        this->pkce = {};
+        m_impl->proxy->fetch_access_token_async(auth_code, m_impl->pkce->get_verifier(), nullptr, result.callback());
+        m_impl->proxy->fetch_access_token_finish(co_await result, &error);
+        m_impl->pkce = {};
         if(error) {
             // TODO: map GError to HTTP error code
-            auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
+            co_await auth_listener->respond(soup::Status::FORBIDDEN, build_server_error_response(error->message));
             co_return error;
         }
     }
 
     // From this point forwards, OAuth2Proxy will add the access token as an
     // 'Authorization: Bearer <access_token>' header to each request
-    this->is_authorized = true;
+    m_impl->is_authorized = true;
     // Send the user's web browser a message letting them know authorization was successful
-    auth_listener->respond(soup::Status::OK, soup::MemoryUse::STATIC, success_response);
-    g_message("Access token: %s\n", this->proxy->get_access_token());
-    g_message("Refresh token: %s\n", this->proxy->get_refresh_token());
-    auto expiration = this->proxy->get_expiration_date();
+    auto error = co_await auth_listener->respond(soup::Status::OK, soup::MemoryUse::STATIC, success_response);
+    if(error) {
+        co_return error;
+    }
+    g_message("Access token: %s\n", m_impl->proxy->get_access_token());
+    g_message("Refresh token: %s\n", m_impl->proxy->get_refresh_token());
+    auto expiration = m_impl->proxy->get_expiration_date();
     g_message("Token expiration: %s\n", expiration->format_iso8601().c_str());
-    auto error = co_await schedule_access_token_refresh();
+    error = co_await m_impl->schedule_access_token_refresh();
 
     // TODO: seems like librest is treating some error responses as success. If we send an empty client
     //  secret, everything appears to succeed but the Bearer token is '(null)', causing API calls to fail
@@ -325,12 +328,9 @@ Task<void> ChatClient::Impl::refresh_access_token_async()
 
 Task<void> ChatClient::connect_to_chat_async(const char* stream_url, gio::Cancellable* cancellable)
 {
-    // Note: needs to stick around for the entirety of this function so there is enough time
-    //  for the server to send a response back to the web browser
-    peel::RefPtr<OneShotServer> auth_listener;
-    if(!m_impl->is_authorized) {
-        auth_listener = OneShotServer::create();
-        auto error = co_await m_impl->authorize(auth_listener);
+    g_assert(m_impl->is_authorized);
+    if(m_impl->is_access_expired()) {
+        auto error = co_await m_impl->refresh_access_token_async();
         if(error) {
             co_return error;
         }

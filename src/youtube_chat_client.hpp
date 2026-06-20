@@ -48,6 +48,7 @@ public:
 
     void set_error_callback(ErrorCallback&&);
     std::expected<peel::String, ErrorPtr> generate_auth_url();
+    Task<void> authorize();
     Task<void> connect_to_chat_async(const char* stream_url, gio::Cancellable* cancellable);
     Task<void> send_message_async(const char* message);
     bool is_authorized() const;

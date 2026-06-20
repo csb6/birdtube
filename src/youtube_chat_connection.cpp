@@ -136,6 +136,12 @@ Task<void> Connection::connect_async()
             this->get_account()->disconnect_with_error("Failed to open OAuth URL in browser", error);
             co_return error;
         }
+        // Perform the authorization
+        auto error_ptr = co_await m_impl->client->authorize();
+        if(error_ptr) {
+            this->get_account()->disconnect_with_error("Authorization failed", error);
+            co_return error_ptr;
+        }
     }
 
     // Connect to the YouTube stream

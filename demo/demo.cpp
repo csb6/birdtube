@@ -96,6 +96,13 @@ int main(int argc, char** argv)
     });
 
     auto main_task = [main_loop, client, stream_url]() -> VoidTask {
+        if(!client->is_authorized()) {
+            auto error = co_await client->authorize();
+            if(error) {
+                g_printerr("Error: %s\n", error->message);
+                main_loop->quit();
+            }
+        }
         auto error = co_await client->connect_to_chat_async(stream_url, nullptr);
         if(error) {
             g_printerr("Error: %s\n", error->message);

@@ -38,8 +38,8 @@ public:
     static peel::RefPtr<OneShotServer> create();
 
     Task<peel::RefPtr<glib::HashTable>> listen(unsigned port);
-    void respond(soup::Status, soup::MemoryUse mem_use, peel::ArrayRef<const uint8_t> content);
-    void respond(soup::Status, char* content);
+    Task<void> respond(soup::Status, soup::MemoryUse mem_use, peel::ArrayRef<const uint8_t> content);
+    Task<void> respond(soup::Status, char* content);
 private:
     peel::RefPtr<soup::Server> server;
     peel::RefPtr<soup::ServerMessage> msg;

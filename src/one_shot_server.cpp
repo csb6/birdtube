@@ -17,8 +17,10 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "one_shot_server.hpp"
 #include <peel/Soup/ServerListenOptions.h>
+#include "youtube_error.h"
 
-class ServerAsyncResult {
+/* Awaiter for server listen() async operation */
+class ServerListenResult {
 public:
     constexpr bool await_ready() const noexcept { return false; }
     void await_suspend(std::coroutine_handle<> h) noexcept { handle = h; }
@@ -35,6 +37,25 @@ public:
     }
     soup::ServerMessage* msg = nullptr;
     glib::HashTable* query = nullptr;
+private:
+    std::coroutine_handle<> handle;
+};
+
+/* Awaiter for server response (i.e. back to user's browser) async operation */
+class ServerSendResponseResult {
+public:
+    constexpr bool await_ready() const noexcept { return false; }
+    void await_suspend(std::coroutine_handle<> h) noexcept { handle = h; }
+    void await_resume() {}
+
+    auto callback()
+    {
+        return [](soup::ServerMessage*) {
+            // If browser doesn't accept our response then not really
+            // any reason to emit an error. The user already approved the
+            // OAuth authorization and the client will continue from there.
+        };
+    }
 private:
     std::coroutine_handle<> handle;
 };
@@ -57,7 +78,7 @@ peel::RefPtr<OneShotServer> OneShotServer::create()
 
 Task<peel::RefPtr<glib::HashTable>> OneShotServer::listen(unsigned port)
 {
-    ServerAsyncResult result;
+    ServerListenResult result;
     peel::UniquePtr<glib::Error> error;
     this->server->add_handler("/", result.callback());
     // TODO: timeout for server?
@@ -69,19 +90,24 @@ Task<peel::RefPtr<glib::HashTable>> OneShotServer::listen(unsigned port)
     co_await result;
     this->msg = result.msg;
     this->msg->pause();
-    peel::RefPtr<glib::HashTable> query = result.query;
+    peel::RefPtr query = result.query;
     this->server->remove_handler("/");
     co_return query;
 }
 
-void OneShotServer::respond(soup::Status status, soup::MemoryUse mem_use, peel::ArrayRef<const uint8_t> content)
+Task<void> OneShotServer::respond(soup::Status status, soup::MemoryUse mem_use,
+                                  peel::ArrayRef<const uint8_t> content)
 {
     this->msg->set_status((unsigned)status, nullptr);
     this->msg->set_response("text/html", mem_use, content);
+    ServerSendResponseResult result;
+    this->msg->connect_finished(result.callback());
     this->msg->unpause();
+    co_await result;
+    co_return {};
 }
 
-void OneShotServer::respond(soup::Status status, char* content)
+Task<void> OneShotServer::respond(soup::Status status, char* content)
 {
-    respond(status, soup::MemoryUse::TAKE, {(uint8_t*)content, strlen(content)});
+    return respond(status, soup::MemoryUse::TAKE, {(uint8_t*)content, strlen(content)});
 }
