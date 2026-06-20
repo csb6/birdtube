@@ -237,6 +237,7 @@ gboolean youtube_chat_unload(GPluginPlugin*, gboolean, GError** error)
             return false;
         }
     }
+    youtube_chat_protocol = {};
     return true;
 }
 
