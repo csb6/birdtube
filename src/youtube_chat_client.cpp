@@ -184,7 +184,7 @@ std::expected<peel::String, ErrorPtr> ChatClient::generate_auth_url()
     // is sending a reply to this request specifically
     auto state_str = get_random_string();
     if(!state_str.has_value()) {
-        return state_str;
+        return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Failed to generate OAuth state string"));
     }
     m_impl->state_str = std::move(state_str.value());
     // User must open this URL in a browser and grant the application permissions.
