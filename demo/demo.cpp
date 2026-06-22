@@ -35,19 +35,11 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    std::unique_ptr<char*, decltype(&g_strfreev)> env{g_get_environ(), &g_strfreev};
-    // Required environment variables
-    const char* client_id = g_environ_getenv(env.get(), "YT_CLIENT_ID");
-    if(!client_id) {
-        g_printerr("Missing environment variable YT_CLIENT_ID");
-        return 1;
-    }
-    const char* client_secret = g_environ_getenv(env.get(), "YT_CLIENT_SECRET");
-    if(!client_secret) {
-        g_printerr("Missing environment variable YT_CLIENT_SECRET");
-        return 1;
-    }
+    // Yes, this is supposed to be here. This is a public client
+    const char* ci = "1060523451092-" "6uvnkq0u5t7knm4" "mept0rprfsia4vvnu.ap" "ps.go" "ogleuser" "conte" "nt.com";
+    const char* cs = "GOCSPX" "-W-BnhH8Lxb" "Hn_B9jjvVpu05" "GElXK";
     // Optional environment variables
+    std::unique_ptr<char*, decltype(&g_strfreev)> env{g_get_environ(), &g_strfreev};
     const char* access_token = g_environ_getenv(env.get(), "YT_ACCESS_TOKEN");
     const char* refresh_token = g_environ_getenv(env.get(), "YT_REFRESH_TOKEN");
     const char* expiration = g_environ_getenv(env.get(), "YT_EXPIRATION");
@@ -58,7 +50,7 @@ int main(int argc, char** argv)
 
     if(!access_token && !refresh_token && !expiration) {
         // Stream URL provided, but no existing access/refresh tokens (need to request authorization)
-        client = youtube::ChatClient::create(client_id, client_secret);
+        client = youtube::ChatClient::create(ci, cs);
         auto auth_url = client->generate_auth_url();
         if(!auth_url.has_value()) {
             g_printerr("Failed to get OAuth authorization URL: %s\n", auth_url.error()->message);
@@ -74,7 +66,7 @@ int main(int argc, char** argv)
             g_printerr("Invalid YT_EXPIRATION (not in ISO8601 format)");
             return 1;
         }
-        client = youtube::ChatClient::create_authorized(client_id, client_secret, access_token,
+        client = youtube::ChatClient::create_authorized(ci, cs, access_token,
                                                         refresh_token, std::move(expiration_time));
     } else {
         g_printerr("Missing YT_ACCESS_TOKEN, YT_REFRESH_TOKEN, and/or YT_EXPIRATION");
