@@ -96,7 +96,7 @@ PEEL_CLASS_IMPL(ChatClient, "YoutubeChatClient", gobject::Object)
 struct ChatClient::Impl {
     void call_error_callback(glib::Error*);
     // Operations
-    Task<void> schedule_access_token_refresh();
+    void schedule_access_token_refresh();
     Task<void> refresh_access_token_async();
     Task<StreamInfo> get_live_stream_info_async(peel::String video_id, gio::Cancellable*);
     Task<void> fetch_messages_async(peel::String next_page_token, guint poll_interval);
@@ -110,6 +110,8 @@ struct ChatClient::Impl {
     ErrorCallback error_callback;
     StreamInfo stream_info;
     bool is_authorized;
+    unsigned refresh_timer_source = 0;
+    unsigned fetch_messages_source = 0;
 };
 
 decltype(ChatClient::sig_new_messages) ChatClient::sig_new_messages;
@@ -155,6 +157,18 @@ peel::RefPtr<ChatClient> ChatClient::create_authorized(const char* client_id, co
     client->m_impl->proxy->set_refresh_token(refresh_token);
     client->m_impl->proxy->set_expiration_date(access_token_expiration);
     return client;
+}
+
+ChatClient::~ChatClient() noexcept
+{
+    if(m_impl->refresh_timer_source) {
+        glib::Source::remove(m_impl->refresh_timer_source);
+        m_impl->refresh_timer_source = 0;
+    }
+    if(m_impl->fetch_messages_source) {
+        glib::Source::remove(m_impl->fetch_messages_source);
+        m_impl->fetch_messages_source = 0;
+    }
 }
 
 bool ChatClient::is_authorized() const
@@ -270,35 +284,39 @@ Task<void> ChatClient::authorize()
     g_message("Refresh token: %s\n", m_impl->proxy->get_refresh_token());
     auto expiration = m_impl->proxy->get_expiration_date();
     g_message("Token expiration: %s\n", expiration->format_iso8601().c_str());
-    error = co_await m_impl->schedule_access_token_refresh();
+    m_impl->schedule_access_token_refresh();
 
     // TODO: seems like librest is treating some error responses as success. If we send an empty client
     //  secret, everything appears to succeed but the Bearer token is '(null)', causing API calls to fail
     co_return error;
 }
 
-Task<void> ChatClient::Impl::schedule_access_token_refresh()
+void ChatClient::Impl::schedule_access_token_refresh()
 {
-    ErrorPtr error;
     auto expiration = this->proxy->get_expiration_date();
     auto now = glib::DateTime::create_now_utc();
     // Refresh 2 minutes before the expiration date
     int64_t refresh_interval = expiration->difference(now) - 120000;
     if(refresh_interval <= 0) {
-        error = co_await this->refresh_access_token_async();
+        this->refresh_access_token_async().start();
     } else {
-        // TODO: how to cancel these timeouts when client object is destroyed
-        glib::timeout_add((unsigned)refresh_interval, [this]() -> bool {
+        if(this->refresh_timer_source) {
+            glib::Source::remove(this->refresh_timer_source);
+        }
+        this->refresh_timer_source = glib::timeout_add_once((unsigned)refresh_interval, [this] {
             this->refresh_access_token_async().start();
-            return false;
         });
     }
-    co_return error;
 }
 
 Task<void> ChatClient::Impl::refresh_access_token_async()
 {
     g_assert(this->is_authorized);
+
+    if(this->refresh_timer_source) {
+        glib::Source::remove(this->refresh_timer_source);
+        this->refresh_timer_source = 0;
+    }
 
     AsyncResult result;
     peel::UniquePtr<glib::Error> error;
@@ -308,7 +326,7 @@ Task<void> ChatClient::Impl::refresh_access_token_async()
         co_return error;
     }
     g_assert(!this->is_access_expired());
-    schedule_access_token_refresh().start();
+    schedule_access_token_refresh();
 
     g_message("Refreshed access token\n");
     g_message("Access token: %s\n", this->proxy->get_access_token());
@@ -403,6 +421,12 @@ Task<void> ChatClient::send_message_async(const char* message, gio::Cancellable*
 Task<void> ChatClient::Impl::fetch_messages_async(peel::String next_page_token, guint poll_interval)
 {
     g_assert(this->is_authorized);
+
+    if(this->fetch_messages_source) {
+        glib::Source::remove(this->fetch_messages_source);
+        this->fetch_messages_source = 0;
+    }
+
     if(this->is_access_expired()) {
         auto error = co_await this->refresh_access_token_async();
         if(error) {
@@ -446,11 +470,13 @@ Task<void> ChatClient::Impl::fetch_messages_async(peel::String next_page_token, 
         peel::ArrayRef<const ChatMessage> messages_span{messages_info->messages.data(), messages_info->messages.size()};
         sig_new_messages.emit(this->client, (void*)&messages_span);
     }
-    glib::timeout_add(messages_info->poll_interval,
-                      [this, next_page_token = std::move(messages_info->next_page_token),
-                       poll_interval = messages_info->poll_interval]() -> bool {
+    if(this->fetch_messages_source) {
+        glib::Source::remove(this->fetch_messages_source);
+    }
+    this->fetch_messages_source = glib::timeout_add_once(messages_info->poll_interval,
+        [this, next_page_token = std::move(messages_info->next_page_token),
+         poll_interval = messages_info->poll_interval] {
         fetch_messages_async(std::move(next_page_token), poll_interval).start();
-        return false;
     });
     co_return {};
 }

@@ -41,6 +41,8 @@ class ChatClient final : public gobject::Object {
 public:
     using ErrorCallback = std::function<void(glib::Error*)>;
 
+    ~ChatClient() noexcept;
+
     void init(Class*);
     static peel::RefPtr<ChatClient> create(const char* client_id, const char* client_secret);
     static peel::RefPtr<ChatClient> create_authorized(const char* client_id, const char* client_secret,
