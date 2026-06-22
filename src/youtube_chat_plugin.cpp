@@ -20,6 +20,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <gplugin.h>
 #include <gplugin-native.h>
 #include <peel/Gio/Task.h>
+#include <peel/GObject/TypeModule.h>
 #include <peel/Purple/Account.h>
 #include <peel/Purple/Conversation.h>
 #include <peel/Purple/ConversationManager.h>
@@ -39,9 +40,9 @@ namespace youtube {
 class Protocol final : public purple::Protocol {
     PEEL_DYNAMIC_CLASS(Protocol, purple::Protocol)
 public:
-    static void init_type(peel::Type type)
+    static void init_type(gobject::TypeModule* type_module, peel::Type type)
     {
-        PEEL_IMPLEMENT_INTERFACE(type, purple::ProtocolConversation);
+        PEEL_IMPLEMENT_INTERFACE_DYNAMIC(type_module, type, purple::ProtocolConversation);
     }
 
     static void init_interface(purple::ProtocolConversation::Iface* iface)
@@ -202,8 +203,8 @@ gboolean youtube_chat_load(GPluginPlugin* plugin, GError** error)
         return false;
     }
 
-    youtube::Connection::register_dynamic_type(G_TYPE_MODULE(plugin));
-    youtube::Protocol::register_dynamic_type(G_TYPE_MODULE(plugin));
+    youtube::Connection::register_dynamic_type(reinterpret_cast<gobject::TypeModule*>(plugin));
+    youtube::Protocol::register_dynamic_type(reinterpret_cast<gobject::TypeModule*>(plugin));
 
     auto* manager = purple::Core::get_default()->get_protocol_manager();
     youtube_chat_protocol = youtube::Protocol::create();
