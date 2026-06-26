@@ -168,7 +168,7 @@ public:
         }
 
         auto conversation = purple::Conversation::create(account, ConvType::CHANNEL, channel_id);
-        conversation->set_online(false);
+        conversation->set_online(true);
         conversation->set_title(connection->get_title());
         conversation_manager->add(conversation);
         co_return conversation;
