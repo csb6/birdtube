@@ -41,12 +41,12 @@ GPluginPluginInfo* youtube_chat_query(GError**)
 
     return purple_plugin_info_new(
         "id", "csb6/purple-youtube",
-        "name", "YouTube Live Chat",
+        "name", "Purple-YT",
         "authors", authors,
         "version", "0.1",
         "category", "Protocol",
         "summary", "YouTube Live Chat Protocol Plugin",
-        "description", "Support for YouTube Live Chat",
+        "description", "Support for YouTube Live chats",
         "website", "https://github.com/csb6/purple-youtube",
         "abi-version", PURPLE_ABI_VERSION,
         "flags", flags,
