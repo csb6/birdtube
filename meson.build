@@ -41,6 +41,7 @@ plugin_install_dir = get_option('prefix') / get_option('libdir') / 'purple-3'
 
 purple_youtube = shared_library('purple-youtube', [
     'src/youtube_chat_plugin.cpp',
+    'src/youtube_chat_protocol.cpp',
     'src/youtube_chat_connection.cpp',
     'src/youtube_chat_client.cpp',
     'src/youtube_chat_parser.cpp',
