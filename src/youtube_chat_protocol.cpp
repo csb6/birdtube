@@ -175,8 +175,7 @@ void Protocol::init_interface(purple::ProtocolConversation::Iface* iface)
                 }
             }(self, _peel_conversation, task).start();
         };
-    iface_class->leave_conversation_finish = [](PurpleProtocolConversation*, GAsyncResult* result,
-                                                GError** error) {
+    iface_class->leave_conversation_finish = [](PurpleProtocolConversation*, GAsyncResult* result, GError** error) {
         return g_task_propagate_boolean(G_TASK(result), error);
     };
     iface_class->send_message_async =
@@ -197,10 +196,9 @@ void Protocol::init_interface(purple::ProtocolConversation::Iface* iface)
                 }
             }(self, _peel_conversation, _peel_message, task).start();
         };
-    iface_class->send_message_finish =
-        [](PurpleProtocolConversation*, GAsyncResult* result, GError** error) {
-            return g_task_propagate_boolean(G_TASK(result), error);
-        };
+    iface_class->send_message_finish = [](PurpleProtocolConversation*, GAsyncResult* result, GError** error) {
+        return g_task_propagate_boolean(G_TASK(result), error);
+    };
 }
 
 } // namespace youtube

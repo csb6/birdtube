@@ -19,7 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <glib-object.h>
 #include <gplugin.h>
 #include <gplugin-native.h>
-#include <peel/Gio/Task.h>
+#include <peel/GLib/Error.h>
 #include <peel/GObject/TypeModule.h>
 #include <peel/Purple/Core.h>
 #include <peel/Purple/ProtocolManager.h>
@@ -95,7 +95,7 @@ gboolean youtube_chat_unload(GPluginPlugin*, gboolean, GError** error)
             return false;
         }
     }
-    youtube_chat_protocol = {};
+    youtube_chat_protocol = nullptr;
     return true;
 }
 
