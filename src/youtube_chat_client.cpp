@@ -31,6 +31,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "task.hpp"
 #include "youtube_chat_parser.hpp"
 #include "one_shot_server.hpp"
+#include "event_source_token.hpp"
 #include "error_wrapper.hpp"
 
 G_DEFINE_QUARK(youtube-chat-error-quark, youtube_chat_error)
@@ -90,50 +91,6 @@ peel::String build_server_error_response(const char* error_str);
 
 static
 std::expected<peel::String, ErrorPtr> get_random_string();
-
-class EventSourceToken {
-public:
-    EventSourceToken()
-        : source_id(0) {}
-    explicit
-    EventSourceToken(guint source_id)
-        : source_id(source_id) {}
-    EventSourceToken(const EventSourceToken&) = delete;
-    EventSourceToken(EventSourceToken&& other) noexcept
-        : source_id(other.source_id)
-    {
-        other.source_id = 0;
-    }
-    ~EventSourceToken() noexcept
-    {
-        disconnect();
-    }
-    EventSourceToken& operator=(const EventSourceToken&) = delete;
-    EventSourceToken& operator=(EventSourceToken&& other) noexcept
-    {
-        disconnect();
-        source_id = other.source_id;
-        other.source_id = 0;
-        return *this;
-    }
-    EventSourceToken& operator=(guint new_source_id) noexcept
-    {
-        disconnect();
-        source_id = new_source_id;
-        return *this;
-    }
-    void disconnect() noexcept
-    {
-        if(source_id) {
-            if(!g_source_remove(source_id)) {
-                g_warning("Failed to remove event source: %d", source_id);
-            }
-            source_id = 0;
-        }
-    }
-private:
-    guint source_id;
-};
 
 PEEL_CLASS_IMPL(ChatClient, "YoutubeChatClient", gobject::Object)
 
