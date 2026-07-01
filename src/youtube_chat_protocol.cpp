@@ -63,7 +63,6 @@ bool Protocol::vfunc_can_connect(purple::Account*)
 peel::RefPtr<purple::Connection> Protocol::vfunc_create_connection(
     purple::Account* account, peel::UniquePtr<glib::Error>*)
 {
-    account->set_remember_password(true);
     return youtube::Connection::create(account);
 }
 
