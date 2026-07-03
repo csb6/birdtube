@@ -105,11 +105,6 @@ void Connection::on_client_error(ChatClient*, const glib::Error* error)
 
 void Connection::on_tokens_changed(ChatClient*, const char* access_token, const char* refresh_token)
 {
-    // May receive notifications for a token before the other is set; wait until they are both set
-    // to non-null values before doing anything
-    if(!access_token || !refresh_token) {
-        return;
-    }
     [](Connection* self, peel::String credentials_base64) -> VoidTask {
         auto* credential_manager = purple::Core::get_default()->get_credential_manager();
         AsyncResult result;

@@ -201,7 +201,13 @@ peel::RefPtr<glib::DateTime> ChatClient::get_access_token_expiration() const
 
 void ChatClient::on_tokens_changed(gobject::Object*, gobject::ParamSpec*)
 {
-    sig_tokens_changed.emit(this, get_access_token(), get_refresh_token());
+    auto access_token = get_access_token();
+    auto refresh_token = get_refresh_token();
+    // May receive notifications for a token before the other is set; wait until they are both set
+    // to non-null values before doing anything
+    if(access_token && refresh_token) {
+        sig_tokens_changed.emit(this, access_token, refresh_token);
+    }
 }
 
 void ChatClient::on_access_token_expiration_changed(gobject::Object*, gobject::ParamSpec*)
