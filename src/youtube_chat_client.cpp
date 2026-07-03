@@ -25,6 +25,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <peel/Soup/Status.h>
 #include <peel/UniquePtr.h>
 #include <peel/Gio/File.h>
+#include <peel/Gio/MemoryInputStream.h>
 #include <peel/ArrayRef.h>
 #include <peel/GLib/functions.h>
 #include <peel/GLib/HashTable.h>
@@ -99,7 +100,7 @@ struct ChatClient::Impl {
     void schedule_access_token_refresh();
     Task<void> refresh_access_token_async(gio::Cancellable*);
     Task<StreamInfo> get_live_stream_info_async(peel::String video_id, gio::Cancellable*);
-    Task<void> fetch_messages_async(peel::String next_page_token, guint poll_interval);
+    Task<void> fetch_messages_async();
 
     bool is_access_expired() const;
 
@@ -110,9 +111,10 @@ struct ChatClient::Impl {
     StreamInfo stream_info;
     bool is_authorized;
     EventSourceToken refresh_timer_source;
-    EventSourceToken fetch_messages_source;
+    peel::RefPtr<gio::MemoryInputStream> messages_stream;
     peel::RefPtr<gio::Cancellable> refresh_cancel;
     peel::RefPtr<gio::Cancellable> fetch_cancel;
+    peel::RefPtr<gobject::Object> fetch_weak_ptr;
 };
 
 void ChatClient::Class::init()
@@ -133,10 +135,10 @@ void ChatClient::init(Class*)
         "",
         "",
         YOUTUBE_API_BASE_URL);
-    #ifdef YOUTUBE_CHAT_CLIENT_LOGGING
+    //#ifdef YOUTUBE_CHAT_CLIENT_LOGGING
     auto logger = soup::Logger::create(soup::Logger::LogLevel::BODY);
     m_impl->proxy->add_soup_feature(logger);
-    #endif
+    //#endif
     m_impl->proxy->connect_notify(rest::OAuth2Proxy::prop_access_token(),
                                   this, &ChatClient::on_tokens_changed);
     m_impl->proxy->connect_notify(rest::OAuth2Proxy::prop_refresh_token(),
@@ -144,7 +146,6 @@ void ChatClient::init(Class*)
     m_impl->proxy->connect_notify(rest::OAuth2Proxy::prop_expiration_date(),
                                   this, &ChatClient::on_access_token_expiration_changed);
     m_impl->refresh_cancel = gio::Cancellable::create();
-    m_impl->fetch_cancel = gio::Cancellable::create();
 }
 
 peel::RefPtr<ChatClient> ChatClient::create(const char* client_id, const char* client_secret)
@@ -375,9 +376,8 @@ Task<void> ChatClient::connect_to_chat_async(const char* stream_url, gio::Cancel
     // Cache stream info
     m_impl->stream_info = std::move(*live_stream_info);
     g_assert(m_impl->stream_info.live_chat_id);
-    // Reset cancellable so periodic fetches can resume
-    m_impl->fetch_cancel = gio::Cancellable::create();
-    m_impl->fetch_messages_async(nullptr, 5000).start(); // 5000 = Default poll interval
+    // Start fetching new messages
+    m_impl->fetch_messages_async().start();
 
     co_return {};
 }
@@ -392,8 +392,11 @@ void ChatClient::disconnect()
 
 void ChatClient::disconnect_chat()
 {
-    m_impl->fetch_messages_source.disconnect();
-    m_impl->fetch_cancel->cancel();
+    if(m_impl->fetch_cancel) {
+        m_impl->fetch_cancel->cancel();
+        m_impl->fetch_cancel = nullptr;
+    }
+    m_impl->fetch_weak_ptr = nullptr;
 }
 
 Task<StreamInfo> ChatClient::Impl::get_live_stream_info_async(peel::String video_id, gio::Cancellable* cancellable)
@@ -458,15 +461,18 @@ Task<void> ChatClient::send_message_async(const char* message, gio::Cancellable*
     co_return error;
 }
 
-Task<void> ChatClient::Impl::fetch_messages_async(peel::String next_page_token, guint poll_interval)
+Task<void> ChatClient::Impl::fetch_messages_async()
 {
     g_assert(this->is_authorized);
+    g_assert(!this->fetch_cancel);
+    g_assert(!this->fetch_weak_ptr);
 
-    this->fetch_messages_source.disconnect();
-
+    this->fetch_cancel = gio::Cancellable::create();
+    this->fetch_weak_ptr = gobject::Object::create<gobject::Object>();
     if(this->is_access_expired()) {
         auto error = co_await this->refresh_access_token_async(this->fetch_cancel);
         if(error) {
+            this->client->disconnect_chat();
             co_return error;
         }
     }
@@ -474,47 +480,58 @@ Task<void> ChatClient::Impl::fetch_messages_async(peel::String next_page_token, 
     auto call = this->proxy->new_call();
     call->add_param("liveChatId", this->stream_info.live_chat_id);
     call->add_param("part", "snippet,authorDetails");
-    call->add_param("fields", "nextPageToken,pollingIntervalMillis,"
-                              "items(id,authorDetails(channelId,displayName,isChatModerator),"
-                              "snippet(type,publishedAt,displayMessage,"
-                                "userBannedDetails(banType,bannedUserDetails(channelId,displayName))))");
-    if(next_page_token) {
-        // Only request messages we haven't seen before
-        call->add_param("pageToken", next_page_token);
-    }
+    call->add_param("fields", "items(id,authorDetails(channelId,displayName,isChatModerator),"
+                                "snippet(type,publishedAt,displayMessage,"
+                                  "userBannedDetails(banType,bannedUserDetails(channelId,displayName))))");
     call->set_function("liveChat/messages");
 
-    {
-        AsyncResult result;
-        peel::UniquePtr<glib::Error> error;
-        g_print("Poll interval: %u\n", poll_interval);
-        call->invoke_async(this->fetch_cancel, result.callback());
-        call->invoke_finish(co_await result, &error);
-        if(error) {
-            // TODO: implement some kind of retry mechanism then give up
-            // Note: will try again using the last known polling interval
-            sig_error.emit(this->client, error);
-            co_return error;
+    peel::UniquePtr<glib::Error> error;
+    // TODO: any way to implement Gio.PollableInputStream so that stream doesn't end prematurely,
+    //  i.e. before any bytes get written to it
+    // TODO: is it actually possible to stream JSON data from YouTube API? My hypothesis is that
+    //  if we leave the socket open and wait for more input (instead of making request and closing)
+    //  then the server will keep sending us JSON blocks. Other possibility is that this streamList
+    //  endpoint is gRPC only, in which case let's just go back to polling
+    this->messages_stream = gio::MemoryInputStream::create();
+    call->continuous(
+        [this](rest::ProxyCall*, const gchar* buf, gsize len, const glib::Error* error, gobject::Object*) {
+        // Keep adding data to the stream as long as it stays open
+        if(buf) {
+            // TODO: how to handle refresh if token expires?
+            g_memory_input_stream_add_data(
+                reinterpret_cast<GMemoryInputStream*>(&*this->messages_stream), buf, len, nullptr);
+        } else {
+            this->client->disconnect_chat();
+            if(error) {
+                // TODO: implement some kind of retry mechanism then give up
+                sig_error.emit(this->client, error);
+            } else {
+                // Stream closed without error
+                // TODO: how to handle unexpected stream close
+            }
+        }
+    }, this->fetch_weak_ptr, &error);
+    if(error) {
+        this->client->disconnect_chat();
+        co_return error;
+    }
+
+    while(true) {
+        auto messages_info = co_await parse_chat_messages_async(this->messages_stream, this->fetch_cancel);
+        if(!messages_info.has_value()) {
+            sig_error.emit(this->client, messages_info.error().get());
+            // TODO: might be able to recover from failed parse
+            break;
+        }
+        if(!messages_info->messages.empty()) {
+            // Notify all listeners that a new batch of messages has been received
+            peel::ArrayRef<const ChatMessage> messages_span{messages_info->messages.data(), messages_info->messages.size()};
+            sig_new_messages.emit(this->client, (void*)&messages_span);
         }
     }
-    const char* response = call->get_payload();
-    auto response_len = call->get_payload_length();
-    auto messages_info = parse_chat_messages(peel::ArrayRef{response, (guint)response_len});
-    if(!messages_info.has_value()) {
-        sig_error.emit(this->client, messages_info.error().get());
-        co_return std::move(messages_info.error());
-    }
-    if(!messages_info->messages.empty()) {
-        // Notify all listeners that a new batch of messages has been received
-        peel::ArrayRef<const ChatMessage> messages_span{messages_info->messages.data(), messages_info->messages.size()};
-        sig_new_messages.emit(this->client, (void*)&messages_span);
-    }
-    this->fetch_messages_source = glib::timeout_add_once(messages_info->poll_interval,
-        [this, next_page_token = std::move(messages_info->next_page_token),
-         poll_interval = messages_info->poll_interval] {
-        fetch_messages_async(std::move(next_page_token), poll_interval).start();
-    });
-    co_return {};
+
+    this->client->disconnect_chat();
+    co_return error;
 }
 
 bool ChatClient::Impl::is_access_expired() const

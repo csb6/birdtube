@@ -95,39 +95,36 @@ std::expected<StreamInfo, ErrorPtr> parse_stream_info(peel::ArrayRef<const char>
     return StreamInfo{std::move(title), std::move(live_chat_id)};
 }
 
-std::expected<ResponseInfo, ErrorPtr> parse_chat_messages(peel::ArrayRef<const char> response)
+Task<ResponseInfo> parse_chat_messages_async(
+    peel::RefPtr<gio::MemoryInputStream> input_stream, gio::Cancellable* cancellable)
 {
-    auto root = parse_json(response);
-    if(!root.has_value()) {
-        return std::unexpected(std::move(root.error()));
+    auto parser = json::Parser::create_immutable();
+    AsyncResult result;
+    peel::UniquePtr<glib::Error> error;
+    parser->load_from_stream_async(input_stream, cancellable, result.callback());
+    parser->load_from_stream_finish(co_await result, &error);
+    if(error) {
+        co_return std::unexpected(std::move(error));
     }
-    // Get interval to wait before sending next request
-    auto poll_interval = match_json_uint(*root, "$.pollingIntervalMillis");
-    if(!poll_interval.has_value()) {
-        return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Invalid polling interval"));
-    }
-    // Get the page token to sent in the next request
-    auto next_page_token = match_json_string(*root, "$.nextPageToken");
-    if(!next_page_token) {
-        return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Missing nextPageToken"));
+    auto* root = parser->get_root();
+    if(!root) {
+        co_return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Unexpected empty JSON"));
     }
     // Process the batch of chat messages we have received
-    auto items = match_json_path(*root, "$.items[*]");
+    auto items = match_json_path(root, "$.items[*]");
     if(!items) {
-        return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Missing chat messages"));
+        co_return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Missing chat messages"));
     }
-    ResponseInfo result;
-    result.poll_interval = poll_interval.value();
-    result.next_page_token = next_page_token;
+    ResponseInfo response_info;
     auto item_count = items->get_length();
-    result.messages.reserve(item_count);
+    response_info.messages.reserve(item_count);
     for(guint i = 0; i < item_count; ++i) {
         auto message = parse_chat_message(items->get_element(i));
         if(message) {
-            result.messages.push_back(std::move(message.value()));
+            response_info.messages.push_back(std::move(message.value()));
         }
     }
-    return result;
+    co_return response_info;
 }
 
 peel::String create_text_message(const char* live_chat_id, const char* message)

@@ -20,25 +20,25 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <vector>
 #include <expected>
 #include <peel/GLib/Error.h>
+#include <peel/Gio/MemoryInputStream.h>
 #include <peel/String.h>
 #include <peel/UniquePtr.h>
 #include <peel/ArrayRef.h>
 #include "youtube_types.hpp"
 #include "error_wrapper.hpp"
+#include "task.hpp"
 
 namespace youtube {
 
 struct ResponseInfo {
     std::vector<ChatMessage> messages;
-    guint poll_interval;
-    peel::String next_page_token;
 };
 
 std::expected<peel::String, ErrorPtr> extract_video_id(const char* stream_url);
 
 std::expected<StreamInfo, ErrorPtr> parse_stream_info(peel::ArrayRef<const char> response);
 
-std::expected<ResponseInfo, ErrorPtr> parse_chat_messages(peel::ArrayRef<const char> response);
+Task<ResponseInfo> parse_chat_messages_async(peel::RefPtr<gio::MemoryInputStream>, gio::Cancellable*);
 
 peel::String create_text_message(const char* live_chat_id, const char* message);
 
