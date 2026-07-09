@@ -52,6 +52,7 @@ public:
 
     peel::String get_channel_id();
     peel::String get_title();
+    bool is_connected_to_chat();
 private:
     struct Impl;
 

@@ -179,6 +179,11 @@ bool ChatClient::is_authorized() const
     return m_impl->is_authorized;
 }
 
+bool ChatClient::is_connected_to_chat() const
+{
+    return m_impl->stream_info.live_chat_id;
+}
+
 const char* ChatClient::get_title() const
 {
     return m_impl->stream_info.title;
@@ -433,6 +438,7 @@ void ChatClient::disconnect_chat()
 {
     m_impl->fetch_messages_source.disconnect();
     m_impl->fetch_cancel->cancel();
+    m_impl->stream_info = {};
 }
 
 Task<StreamInfo> ChatClient::Impl::get_live_stream_info_async(peel::String video_id, gio::Cancellable* cancellable)

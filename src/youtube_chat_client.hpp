@@ -54,6 +54,7 @@ public:
     void disconnect_chat();
     Task<void> send_message_async(const char* message, gio::Cancellable*);
     bool is_authorized() const;
+    bool is_connected_to_chat() const;
     const char* get_title() const;
     peel::String get_access_token() const;
     peel::String get_refresh_token() const;

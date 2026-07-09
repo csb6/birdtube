@@ -255,6 +255,11 @@ peel::String Connection::get_title()
     return m_impl->client->get_title();
 }
 
+bool Connection::is_connected_to_chat()
+{
+    return m_impl->client->is_connected_to_chat();
+}
+
 void Connection::Class::init()
 {
     auto* klass = reinterpret_cast<PurpleConnectionClass*>(this);

@@ -57,6 +57,7 @@ public:
         purple::Account*, purple::ChannelJoinDetails*, gio::Cancellable*);
     Task<void> vfunc_leave_conversation_async(purple::Conversation*, gio::Cancellable*);
     Task<void> vfunc_send_message_async(purple::Conversation*, purple::Message*, gio::Cancellable*);
+    Task<void> vfunc_refresh_async(purple::Conversation*, gio::Cancellable*);
 };
 
 } // namespace youtube
