@@ -60,28 +60,6 @@ struct Connection::Impl {
     peel::String stream_url;
 };
 
-void Connection::Class::init()
-{
-    override_vfunc_disconnect<Connection>();
-    auto* klass = reinterpret_cast<PurpleConnectionClass*>(this);
-    klass->connect_async = [](PurpleConnection* connection, GCancellable* cancellable,
-                              GAsyncReadyCallback callback, gpointer data) {
-        auto* self = reinterpret_cast<youtube::Connection*>(connection);
-        auto* task = reinterpret_cast<gio::Task*>(g_task_new(connection, cancellable, callback, data));
-        [](youtube::Connection* self, gio::Task* task) -> VoidTask {
-            auto error = co_await self->vfunc_connect_async(task->get_cancellable());
-            if(error) {
-                task->return_error(error->copy());
-            } else {
-                task->return_boolean(true);
-            }
-        }(self, task).start();
-    };
-    klass->connect_finish = [](PurpleConnection*, GAsyncResult* result, GError** error) {
-        return g_task_propagate_boolean(G_TASK(result), error);
-    };
-}
-
 void Connection::init(Class*)
 {
     m_impl = std::make_unique<Impl>();
@@ -242,11 +220,11 @@ Task<void> Connection::vfunc_connect_async(gio::Cancellable* cancellable)
     co_return {};
 }
 
-bool Connection::vfunc_disconnect(const char*, peel::UniquePtr<glib::Error>*)
+Task<void> Connection::vfunc_disconnect_async(const char*, gio::Cancellable*)
 {
     m_impl->stream_url = nullptr;
     m_impl->client->disconnect();
-    return true;
+    co_return {};
 }
 
 Task<void> Connection::connect_to_chat_async(const char* stream_url, gio::Cancellable* cancellable)
@@ -275,6 +253,43 @@ peel::String Connection::get_channel_id()
 peel::String Connection::get_title()
 {
     return m_impl->client->get_title();
+}
+
+void Connection::Class::init()
+{
+    auto* klass = reinterpret_cast<PurpleConnectionClass*>(this);
+    klass->connect_async = [](PurpleConnection* connection, GCancellable* cancellable,
+                              GAsyncReadyCallback callback, gpointer data) {
+        auto* self = reinterpret_cast<youtube::Connection*>(connection);
+        auto* task = reinterpret_cast<gio::Task*>(g_task_new(connection, cancellable, callback, data));
+        [](youtube::Connection* self, gio::Task* task) -> VoidTask {
+            auto error = co_await self->vfunc_connect_async(task->get_cancellable());
+            if(error) {
+                task->return_error(error->copy());
+            } else {
+                task->return_boolean(true);
+            }
+        }(self, task).start();
+    };
+    klass->connect_finish = [](PurpleConnection*, GAsyncResult* result, GError** error) {
+        return g_task_propagate_boolean(G_TASK(result), error);
+    };
+    klass->disconnect_async = [](PurpleConnection* connection, const char* message, GCancellable* cancellable,
+                                 GAsyncReadyCallback callback, gpointer data) {
+        auto* self = reinterpret_cast<youtube::Connection*>(connection);
+        auto* task = reinterpret_cast<gio::Task*>(g_task_new(connection, cancellable, callback, data));
+        [](youtube::Connection* self, peel::String message, gio::Task* task) -> VoidTask {
+            auto error = co_await self->vfunc_disconnect_async(message, task->get_cancellable());
+            if(error) {
+                task->return_error(error->copy());
+            } else {
+                task->return_boolean(true);
+            }
+        }(self, message, task).start();
+    };
+    klass->disconnect_finish = [](PurpleConnection*, GAsyncResult* result, GError** error) {
+        return g_task_propagate_boolean(G_TASK(result), error);
+    };
 }
 
 } // namespace youtube
