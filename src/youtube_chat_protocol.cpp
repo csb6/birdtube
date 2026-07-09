@@ -255,7 +255,7 @@ void Protocol::init_interface(purple::ProtocolConversation::Iface* iface)
             }
         }(self, _peel_conversation, task).start();
     };
-    iface_class->refresh_finish = [](PurpleProtocolConversation* protocol, GAsyncResult* result, GError** error) {
+    iface_class->refresh_finish = [](PurpleProtocolConversation*, GAsyncResult* result, GError** error) {
         return g_task_propagate_boolean(G_TASK(result), error);
     };
 }
