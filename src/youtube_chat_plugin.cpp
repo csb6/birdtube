@@ -47,7 +47,7 @@ GPluginPluginInfo* youtube_chat_query(GError**)
         "category", "Protocol",
         "summary", "YouTube Live Chat Protocol Plugin",
         "description", "Support for YouTube Live chats",
-        "website", "https://github.com/csb6/purple-youtube",
+        "website", "https://github.com/csb6/birdtube",
         "abi-version", PURPLE_ABI_VERSION,
         "flags", flags,
         nullptr);
