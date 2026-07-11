@@ -46,8 +46,9 @@ GPluginPluginInfo* youtube_chat_query(GError**)
         "version", "0.1",
         "category", "Protocol",
         "summary", "YouTube Live Chat Protocol Plugin",
-        "description", "Support for YouTube Live chats",
-        "website", "https://github.com/csb6/birdtube",
+        "description", "Enables you to connect to a YouTube stream's live chat and send/receive messages.",
+        "website", "https://csb6.net/birdtube",
+        "license-id", "GPL-3+",
         "abi-version", PURPLE_ABI_VERSION,
         "flags", flags,
         nullptr);

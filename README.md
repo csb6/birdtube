@@ -5,8 +5,6 @@ and post messages in YouTube live chats from within Pidgin.
 
 This is an unofficial plugin not affiliated with or endorsed by either Pidgin or YouTube.
 
-**Note**: Pidgin 3 and this plugin are alpha software and are not currently meant for non-technical users.
-
 ## Dependencies
 
 - [GObject](https://docs.gtk.org/gobject/)
