@@ -16,9 +16,11 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "youtube_chat_client.hpp"
-#include <algorithm>
 #include <string>
 #include <unordered_map>
+#ifdef __linux__
+#include <sys/random.h>
+#endif
 #include <peel/Rest/OAuth2Proxy.h>
 #include <peel/Rest/OAuth2ProxyCall.h>
 #include <peel/Rest/PkceCodeChallenge.h>
@@ -27,7 +29,6 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <peel/Soup/MemoryUse.h>
 #include <peel/Soup/Status.h>
 #include <peel/UniquePtr.h>
-#include <peel/Gio/File.h>
 #include <peel/ArrayRef.h>
 #include <peel/GLib/functions.h>
 #include <peel/GLib/HashTable.h>
@@ -640,19 +641,18 @@ std::expected<peel::String, ErrorPtr> get_random_string()
 
     peel::String result;
     peel::UniquePtr<glib::Error> error;
-    #if defined(G_OS_UNIX)
-        auto urandom = gio::File::create_for_path("/dev/urandom");
-        auto rand_stream = urandom->read(nullptr, &error);
-        if(error) {
-            return std::unexpected(std::move(error));
-        }
-        gsize bytes_read = 0;
+    #ifdef __linux__
         uint8_t* buffer = (uint8_t*)g_malloc(STATE_STR_LEN + 1);
         result = peel::String::adopt_string((char*)buffer);
-        rand_stream->read_all(peel::ArrayRef(buffer, STATE_STR_LEN), &bytes_read, nullptr, &error);
-        if(error) {
-            return std::unexpected(std::move(error));
+        auto err = getrandom(buffer, STATE_STR_LEN, 0);
+        if(err < 0) {
+            return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Failed to read random data: %s",
+                                            strerror(errno)));
         }
+    #elif defined(G_OS_UNIX)
+        uint8_t* buffer = (uint8_t*)g_malloc(STATE_STR_LEN + 1);
+        result = peel::String::adopt_string((char*)buffer);
+        arc4random_buf(buffer, STATE_STR_LEN);
     #elif defined(G_OS_WIN32)
         // TODO: test on Windows somehow
         uint8_t* buffer = (uint8_t*)g_malloc(STATE_STR_LEN + 1);
