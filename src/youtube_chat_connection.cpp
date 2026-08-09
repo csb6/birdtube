@@ -37,7 +37,6 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <peel/Purple/Message.h>
 #include <peel/Purple/Ui.h>
 #include <peel/GLib/DateTime.h>
-#include <span>
 #include <optional>
 #include <utility>
 #include "youtube_chat_client.hpp"
@@ -291,25 +290,20 @@ void Connection::Class::init()
 static
 peel::String encode_tokens(const char* access_token, const char* refresh_token)
 {
-    auto access_token_base64 = glib::base64_encode(
-        peel::ArrayRef<const uint8_t>{(uint8_t*)access_token, strlen(access_token)}
-    );
-    auto refresh_token_base64 = glib::base64_encode(
-        peel::ArrayRef<const uint8_t>{(uint8_t*)refresh_token, strlen(refresh_token)}
-    );
+    auto access_token_base64 = glib::base64_encode({(uint8_t*)access_token, strlen(access_token)});
+    auto refresh_token_base64 = glib::base64_encode({(uint8_t*)refresh_token, strlen(refresh_token)});
     return glib::strconcat(access_token_base64.c_str(), ":", refresh_token_base64.c_str());
 }
 
 static
-peel::String decode_base64(std::span<const uint8_t> base64_text)
+peel::String decode_base64(peel::ArrayRef<const uint8_t> base64_text)
 {
     // +1 for null terminator
     size_t out_buffer_len = (base64_text.size() / 4) * 3 + 3 + 1;
     auto* out_buffer = (uint8_t*)g_malloc(out_buffer_len);
     int state = 0;
     unsigned save = 0;
-    glib::base64_decode_step(
-        peel::ArrayRef<const uint8_t>{&*base64_text.begin(), base64_text.size()}, out_buffer, &state, &save);
+    glib::base64_decode_step(base64_text, out_buffer, &state, &save);
     return peel::String::adopt_string((char*)out_buffer);
 }
 
@@ -317,13 +311,15 @@ static
 std::optional<std::pair<peel::String, peel::String>>
 extract_access_and_refresh_tokens(const char* credentials)
 {
-    // TODO: add (begin, end) constructor to ArrayRef so no need for span
-    std::span<const uint8_t> credentials_view{(uint8_t*)credentials, strlen(credentials)};
+    // TODO: add (begin, end) constructor to ArrayRef
+    peel::ArrayRef<const uint8_t> credentials_view{(uint8_t*)credentials, strlen(credentials)};
     auto delimiter = std::ranges::find(credentials_view, ':');
     if(delimiter == credentials_view.end() || delimiter + 1 == credentials_view.end()) {
         return {};
     }
-    std::span<const uint8_t> access_token_base64{credentials_view.begin(), delimiter};
-    std::span<const uint8_t> refresh_token_base64{delimiter + 1, credentials_view.end()};
+    peel::ArrayRef<const uint8_t> access_token_base64{
+        credentials_view.begin(), static_cast<size_t>(delimiter - credentials_view.begin())};
+    peel::ArrayRef<const uint8_t> refresh_token_base64{
+        delimiter + 1, static_cast<size_t>(credentials_view.end() - delimiter)};
     return std::make_pair(decode_base64(access_token_base64), decode_base64(refresh_token_base64));
 }
