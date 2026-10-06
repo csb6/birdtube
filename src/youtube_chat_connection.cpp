@@ -161,7 +161,7 @@ Task<void> Connection::vfunc_connect_async(gio::Cancellable* cancellable)
             // Use existing credentials
             auto credentials = extract_access_and_refresh_tokens(credentials_str.c_str());
             if(!credentials.has_value()) {
-                error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "Invalid account credentials");
+                error = glib::Error::create(YOUTUBE_CHAT_ERROR, 1, "%s", "Invalid account credentials");
                 co_return error;
             }
             peel::String& access_token = credentials->first;
