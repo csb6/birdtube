@@ -48,7 +48,7 @@ static constexpr struct SupportedMsg {
 static
 std::optional<ChatMessage> parse_chat_message(json::Node* item);
 
-static std::expected<peel::RefPtr<json::Node>, ErrorPtr> parse_json(peel::ArrayRef<const char> response);
+static std::expected<peel::RefPtr<json::Node>, ErrorPtr> parse_json(peel::ArrayRef<const uint8_t> response);
 
 static peel::RefPtr<json::Array> match_json_path(json::Node* root, const char* path);
 static peel::String match_json_string(json::Node* root, const char* path);
@@ -75,7 +75,7 @@ std::expected<peel::String, ErrorPtr> extract_video_id(const char* stream_url)
     return video_id;
 }
 
-std::expected<StreamInfo, ErrorPtr> parse_stream_info(peel::ArrayRef<const char> response)
+std::expected<StreamInfo, ErrorPtr> parse_stream_info(peel::ArrayRef<const uint8_t> response)
 {
     auto root = parse_json(response);
     if(!root.has_value()) {
@@ -95,7 +95,7 @@ std::expected<StreamInfo, ErrorPtr> parse_stream_info(peel::ArrayRef<const char>
     return StreamInfo{std::move(title), std::move(live_chat_id)};
 }
 
-std::expected<peel::String, ErrorPtr> parse_display_name(peel::ArrayRef<const char> response)
+std::expected<peel::String, ErrorPtr> parse_display_name(peel::ArrayRef<const uint8_t> response)
 {
     auto root = parse_json(response);
     if(!root.has_value()) {
@@ -111,7 +111,7 @@ std::expected<peel::String, ErrorPtr> parse_display_name(peel::ArrayRef<const ch
     return display_name;
 }
 
-std::expected<ResponseInfo, ErrorPtr> parse_chat_messages(peel::ArrayRef<const char> response)
+std::expected<ResponseInfo, ErrorPtr> parse_chat_messages(peel::ArrayRef<const uint8_t> response)
 {
     auto root = parse_json(response);
     if(!root.has_value()) {
@@ -146,7 +146,7 @@ std::expected<ResponseInfo, ErrorPtr> parse_chat_messages(peel::ArrayRef<const c
     return result;
 }
 
-peel::String create_text_message(const char* live_chat_id, const char* message)
+peel::RefPtr<glib::Bytes> create_text_message(const char* live_chat_id, const char* message)
 {
     auto builder = json::Builder::create_immutable();
     builder->begin_object();
@@ -164,7 +164,8 @@ peel::String create_text_message(const char* live_chat_id, const char* message)
         builder->end_object();
     builder->end_object();
     auto root = builder->get_root();
-    return json::to_string(root, /*pretty=*/true);
+    auto msg_str = json::to_string(root, /*pretty=*/true);
+    return glib::Bytes::create({(const uint8_t*)msg_str.c_str(), strlen(msg_str)});
 }
 
 static
@@ -230,11 +231,11 @@ std::optional<ChatMessage> parse_chat_message(json::Node* item)
 }
 
 static
-std::expected<peel::RefPtr<json::Node>, ErrorPtr> parse_json(peel::ArrayRef<const char> response)
+std::expected<peel::RefPtr<json::Node>, ErrorPtr> parse_json(peel::ArrayRef<const uint8_t> response)
 {
     peel::UniquePtr<glib::Error> error;
     auto parser = json::Parser::create_immutable();
-    parser->load_from_data(response.begin(), response.size(), &error);
+    parser->load_from_data((const char*)response.begin(), response.size(), &error);
     if(error) {
         return std::unexpected(std::move(error));
     }

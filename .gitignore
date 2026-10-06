@@ -3,3 +3,4 @@ build/
 run.sh
 subprojects/rest-1.0/
 subprojects/peel/
+subprojects/goauth-1.0/

@@ -1,0 +1,4 @@
+[wrap-git]
+url=https://codeberg.org/csb6/goauth.git
+revision=HEAD
+depth=1

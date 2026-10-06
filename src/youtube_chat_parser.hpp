@@ -19,6 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <vector>
 #include <expected>
+#include <peel/GLib/Bytes.h>
 #include <peel/GLib/Error.h>
 #include <peel/String.h>
 #include <peel/UniquePtr.h>
@@ -36,12 +37,12 @@ struct ResponseInfo {
 
 std::expected<peel::String, ErrorPtr> extract_video_id(const char* stream_url);
 
-std::expected<StreamInfo, ErrorPtr> parse_stream_info(peel::ArrayRef<const char> response);
+std::expected<StreamInfo, ErrorPtr> parse_stream_info(peel::ArrayRef<const uint8_t> response);
 
-std::expected<peel::String, ErrorPtr> parse_display_name(peel::ArrayRef<const char> response);
+std::expected<peel::String, ErrorPtr> parse_display_name(peel::ArrayRef<const uint8_t> response);
 
-std::expected<ResponseInfo, ErrorPtr> parse_chat_messages(peel::ArrayRef<const char> response);
+std::expected<ResponseInfo, ErrorPtr> parse_chat_messages(peel::ArrayRef<const uint8_t> response);
 
-peel::String create_text_message(const char* live_chat_id, const char* message);
+peel::RefPtr<glib::Bytes> create_text_message(const char* live_chat_id, const char* message);
 
 } // namespace youtube

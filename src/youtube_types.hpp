@@ -28,18 +28,18 @@ namespace peel {
     namespace GObject {}
     namespace Gio {}
     namespace Soup {}
-    namespace Rest {}
     namespace Json {}
     namespace Purple {}
+    namespace GOAuth {};
 }
 
 namespace glib = peel::GLib;
 namespace gio = peel::Gio;
 namespace gobject = peel::GObject;
 namespace soup = peel::Soup;
-namespace rest = peel::Rest;
 namespace json = peel::Json;
 namespace purple = peel::Purple;
+namespace goauth = peel::GOAuth;
 
 namespace youtube {
 

@@ -19,6 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <peel/GLib/DateTime.h>
 #include <peel/GLib/Error.h>
+#include <peel/GLib/Uri.h>
 #include <peel/GObject/GObject.h>
 #include <peel/Gio/Cancellable.h>
 #include <peel/class.h>
