@@ -1,7 +1,6 @@
 # BirdTube
 
-BirdTube is a plugin for [Pidgin 3](https://pidgin.im/) that makes it possible to connect, read,
-and post messages in YouTube live chats from within Pidgin.
+BirdTube is a plugin for [Pidgin 3](https://pidgin.im/) that makes it possible to interact with YouTube live chats from within Pidgin.
 
 This is an unofficial plugin not affiliated with or endorsed by either Pidgin or YouTube.
 
@@ -11,15 +10,14 @@ This is an unofficial plugin not affiliated with or endorsed by either Pidgin or
 - [GLib](https://docs.gtk.org/glib/)
 - [Libsoup](https://libsoup.gnome.org/libsoup-3.0/)
 - Purple 3 (Pidgin is a graphical frontend for this library)
-- [Librest](https://gitlab.gnome.org/GNOME/librest) (will be automatically cloned as a subproject)
-- [Peel](https://gitlab.gnome.org/bugaevc/peel) (will be automatically cloned as a subproject)
+- [Peel](https://gitlab.gnome.org/bugaevc/peel)
+- [GOAuth](https://codeberg.org/csb6/goauth)
 
 ## Building
 
-There are two ways to build the plugin: Meson or Flatpak. Both require you to first clone this repository.
+There are two ways to build the plugin once you have cloned the repository: Meson or Flatpak.
 
-Flatpak is the easiest because it builds the plugin within a sandbox and integrates well with Pidgin 3's
-use of Flatpak
+Flatpak is the easiest because it builds the plugin within a sandbox and integrates well with Pidgin 3's use of Flatpak
 
 ### Flatpak
 
@@ -41,8 +39,7 @@ meson setup build
 ninja -C build
 ```
 
-This locally builds the plugin and a demo program in a local directory named `build`. Note that it expects you to have installed
-all dependencies beforehand.
+This locally builds the plugin and a demo program in a local directory named `build`.
 
 ## License
 
