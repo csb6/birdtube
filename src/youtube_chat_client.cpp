@@ -275,7 +275,12 @@ Task<void> ChatClient::Impl::refresh_access_token_async(gio::Cancellable* cancel
 
     AsyncResult result;
     peel::UniquePtr<glib::Error> error;
-    this->proxy->refresh_token_fetch_async(cancellable, result.callback());
+
+    auto params = glib::HashTable::new_full(g_str_hash, g_str_equal, nullptr, g_free);
+    // YouTube requires the client secret be included here for some reason
+    glib::HashTable::insert(params, (void*)GOAUTH_PARAM_CLIENT_SECRET,
+        (void*)g_strdup(this->proxy->get_client_secret()));
+    this->proxy->refresh_token_fetch_async(params, cancellable, result.callback());
     this->proxy->refresh_token_fetch_finish(co_await result, &error);
     if(error) {
         co_return error;
