@@ -51,12 +51,3 @@ birdtube = shared_library('birdtube', [
   install: true,
   install_dir: plugin_install_dir,
 )
-
-executable('yt-chat-demo', [
-      'demo/demo.cpp',
-      peel_codegen
-    ],
-    dependencies: [gobject, peel],
-    include_directories: ['src'],
-    link_with: [birdtube]
-)

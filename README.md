@@ -39,7 +39,7 @@ meson setup build
 ninja -C build
 ```
 
-This locally builds the plugin and a demo program in a local directory named `build`.
+This locally builds the plugin in a local directory named `build`.
 
 ## License
 
