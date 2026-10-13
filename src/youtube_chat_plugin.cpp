@@ -25,7 +25,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <peel/Purple/ProtocolManager.h>
 #include "youtube_chat_connection.hpp"
 #include "youtube_chat_protocol.hpp"
-#include "youtube_error.h"
+#include "youtube_error.hpp"
 
 static peel::RefPtr<youtube::Protocol> youtube_chat_protocol;
 

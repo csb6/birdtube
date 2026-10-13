@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #pragma once
 
-#include "youtube_error.h"
+#include "youtube_error.hpp"
 #include <peel/String.h>
 #include <peel/RefPtr.h>
 #include <peel/GLib/DateTime.h>
