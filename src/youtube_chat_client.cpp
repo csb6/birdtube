@@ -430,9 +430,7 @@ Task<void> ChatClient::send_message_async(std::string stream_url, const char* me
         co_return {};
     }
 
-    auto params = glib::HashTable::new_(g_str_hash, g_str_equal);
-    glib::HashTable::insert(params, (void*)"part", (void*)"snippet");
-    auto request = m_impl->proxy->create_message("POST", "liveChat/messages", params);
+    auto request = m_impl->proxy->create_message("POST", "liveChat/messages?part=snippet", nullptr);
     auto message_bytes = create_text_message(conversation->second.stream_info.live_chat_id, message);
     request->set_request_body_from_bytes("application/json", message_bytes);
 
