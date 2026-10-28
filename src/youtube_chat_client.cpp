@@ -19,7 +19,9 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <string>
 #include <map>
 #include <peel/GOAuth/Client.h>
-#include <peel/GOAuth/GOAuth.h>
+#include <peel/GOAuth/AuthParams.h>
+#include <peel/GOAuth/AccessParams.h>
+#include <peel/GOAuth/RefreshParams.h>
 #include <peel/Soup/Logger.h>
 #include <peel/Soup/LoggerLogLevel.h>
 #include <peel/Soup/MemoryUse.h>
@@ -45,6 +47,12 @@ namespace youtube {
 #define YOUTUBE_API_TOKEN_URL "https://oauth2.googleapis.com/token"
 #define YOUTUBE_API_SCOPE "https://www.googleapis.com/auth/youtube.force-ssl"
 #define REDIRECT_PORT 43215
+
+enum class AuthState : uint8_t {
+    Unauthorized,
+    InProgress,
+    Authorized
+};
 
 struct Conversation {
     Conversation(StreamInfo stream_info)
@@ -87,8 +95,7 @@ struct ChatClient::Impl {
     ChatClient* client;
     peel::RefPtr<goauth::Client> proxy;
     peel::RefPtr<soup::Session> session;
-    peel::String pkce_code_verifier;
-    bool is_authorized;
+    AuthState auth_state = AuthState::Unauthorized;
     EventSourceToken refresh_timer_source;
     peel::RefPtr<gio::Cancellable> refresh_cancel;
     std::map<std::string, Conversation> conversations;
@@ -142,7 +149,7 @@ peel::RefPtr<ChatClient> ChatClient::create_authorized(const char* client_id, co
                                                        peel::RefPtr<glib::DateTime> access_token_expiration)
 {
     auto client = create(client_id, client_secret);
-    client->m_impl->is_authorized = true;
+    client->m_impl->auth_state = AuthState::Authorized;
     client->m_impl->proxy->set_access_token(access_token);
     client->m_impl->proxy->set_refresh_token(refresh_token);
     client->m_impl->proxy->set_access_token_expiration(access_token_expiration);
@@ -156,7 +163,7 @@ ChatClient::~ChatClient() noexcept
 
 bool ChatClient::is_authorized() const
 {
-    return m_impl->is_authorized;
+    return m_impl->auth_state == AuthState::Authorized;
 }
 
 bool ChatClient::is_chat_connected(const char* stream_url) const
@@ -174,25 +181,10 @@ const char* ChatClient::get_title(const char* stream_url) const
     return conversation->second.stream_info.title;
 }
 
-peel::String ChatClient::get_access_token() const
-{
-    return m_impl->proxy->get_access_token();
-}
-
-peel::String ChatClient::get_refresh_token() const
-{
-    return m_impl->proxy->get_refresh_token();
-}
-
-peel::RefPtr<glib::DateTime> ChatClient::get_access_token_expiration() const
-{
-    return m_impl->proxy->get_access_token_expiration();
-}
-
 void ChatClient::on_tokens_changed(gobject::Object*, gobject::ParamSpec*)
 {
-    auto access_token = get_access_token();
-    auto refresh_token = get_refresh_token();
+    auto access_token = m_impl->proxy->get_access_token();
+    auto refresh_token = m_impl->proxy->get_refresh_token();
     // May receive notifications for a token before the other is set; wait until they are both set
     // to non-null values before doing anything
     if(access_token && refresh_token) {
@@ -202,43 +194,42 @@ void ChatClient::on_tokens_changed(gobject::Object*, gobject::ParamSpec*)
 
 void ChatClient::on_access_token_expiration_changed(gobject::Object*, gobject::ParamSpec*)
 {
-    auto expiration = get_access_token_expiration();
+    auto expiration = m_impl->proxy->get_access_token_expiration();
     sig_access_token_expiration_changed.emit(this, expiration);
 }
 
 std::expected<peel::String, ErrorPtr> ChatClient::generate_auth_url()
 {
-    if(m_impl->pkce_code_verifier) {
+    if(m_impl->auth_state == AuthState::InProgress) {
         return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Already have an in-progress OAuth flow"));
     }
-    auto params = glib::HashTable::new_full(g_str_hash, g_str_equal, nullptr, g_free);
-    glib::HashTable::insert(params, (void*)GOAUTH_PARAM_SCOPE, g_strdup(YOUTUBE_API_SCOPE));
+    auto params = goauth::AuthParams::create(m_impl->proxy);
+    params->add(GOAUTH_PARAM_SCOPE, YOUTUBE_API_SCOPE);
     peel::UniquePtr<glib::Error> error;
-    m_impl->pkce_code_verifier = goauth::add_auth_url_pkce_params(params, &error);
-    if(!m_impl->pkce_code_verifier) {
+    params->add_pkce(&error);
+    if(error) {
         return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Failed to generate PKCE code verifier"));
     }
     // User must open this URL in a browser and grant the application permissions.
     // Once they have done so, they will get redirected to http://127.0.0.1:REDIRECT_PORT. We
     // will be listening on REDIRECT_PORT and will continue the authorization flow from
     // there.
-    auto auth_url = m_impl->proxy->build_auth_url(params);
+    auto auth_url = m_impl->proxy->build_auth_url(std::move(params));
     return auth_url->to_string();
 }
 
 Task<void> ChatClient::authorize()
 {
-    if(!m_impl->pkce_code_verifier) {
-        co_return ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "No OAuth flow in-progress - call generate_auth_url first");
+    if(m_impl->auth_state == AuthState::InProgress) {
+       co_return ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "No OAuth flow in-progress - call generate_auth_url first");
     }
 
-    auto params = glib::HashTable::new_full(g_str_hash, g_str_equal, nullptr, g_free);
-    glib::HashTable::insert(params, (void*)GOAUTH_PARAM_CLIENT_SECRET, g_strdup(m_impl->proxy->get_client_secret()));
-    glib::HashTable::insert(params, (void*)GOAUTH_PARAM_CODE_VERIFIER, g_strdup(m_impl->pkce_code_verifier.c_str()));
+    auto params = goauth::AccessParams::create();
+    params->add(GOAUTH_PARAM_CLIENT_SECRET, m_impl->proxy->get_client_secret());
 
     peel::UniquePtr<glib::Error> error;
     AsyncResult result;
-    m_impl->proxy->await_auth_code_then_access_token_async(params, nullptr, result.callback());
+    m_impl->proxy->await_auth_code_then_access_token_async(std::move(params), nullptr, result.callback());
     m_impl->proxy->await_auth_code_then_access_token_finish(co_await result, &error);
     if(error) {
         co_return error;
@@ -246,7 +237,7 @@ Task<void> ChatClient::authorize()
 
     // From this point forwards, goauth::Client will add the access token as an
     // 'Authorization: Bearer <access_token>' header to each request
-    m_impl->is_authorized = true;
+    m_impl->auth_state = AuthState::Authorized;
     m_impl->schedule_access_token_refresh();
 
     co_return error;
@@ -269,18 +260,17 @@ void ChatClient::Impl::schedule_access_token_refresh()
 
 Task<void> ChatClient::Impl::refresh_access_token_async(gio::Cancellable* cancellable)
 {
-    g_assert(this->is_authorized);
+    g_assert(this->auth_state == AuthState::Authorized);
 
     this->refresh_timer_source.disconnect();
 
     AsyncResult result;
     peel::UniquePtr<glib::Error> error;
 
-    auto params = glib::HashTable::new_full(g_str_hash, g_str_equal, nullptr, g_free);
+    auto params = goauth::RefreshParams::create();
     // YouTube requires the client secret be included here for some reason
-    glib::HashTable::insert(params, (void*)GOAUTH_PARAM_CLIENT_SECRET,
-        (void*)g_strdup(this->proxy->get_client_secret()));
-    this->proxy->refresh_token_fetch_async(params, cancellable, result.callback());
+    params->add(GOAUTH_PARAM_CLIENT_SECRET, this->proxy->get_client_secret());
+    this->proxy->refresh_token_fetch_async(std::move(params), cancellable, result.callback());
     this->proxy->refresh_token_fetch_finish(co_await result, &error);
     if(error) {
         co_return error;
@@ -298,7 +288,7 @@ Task<void> ChatClient::Impl::refresh_access_token_async(gio::Cancellable* cancel
 
 Task<peel::String> ChatClient::get_user_display_name(gio::Cancellable* cancellable)
 {
-    g_assert(m_impl->is_authorized);
+    g_assert(m_impl->auth_state == AuthState::Authorized);
     if(m_impl->is_access_expired()) {
         // Note: use passed in cancellable instead of m_impl->cancellable since this is a one-off
         //   operation and not a periodic operation
@@ -331,7 +321,7 @@ Task<peel::String> ChatClient::get_user_display_name(gio::Cancellable* cancellab
 //  copies)
 Task<void> ChatClient::connect_to_chat_async(std::string stream_url, gio::Cancellable* cancellable)
 {
-    g_assert(m_impl->is_authorized);
+    g_assert(m_impl->auth_state == AuthState::Authorized);
     if(m_impl->is_access_expired()) {
         // Note: use passed in cancellable instead of m_impl->cancellable since this is a one-off
         //   operation and not a periodic operation
@@ -369,7 +359,7 @@ void ChatClient::disconnect()
     m_impl->conversations.clear();
     m_impl->refresh_timer_source.disconnect();
     m_impl->refresh_cancel->cancel();
-    m_impl->is_authorized = false;
+    m_impl->auth_state = AuthState::Unauthorized;
 }
 
 void ChatClient::disconnect_chat(const char* stream_url)
@@ -384,9 +374,7 @@ void ChatClient::disconnect_chat(const char* stream_url)
 
 Task<StreamInfo> ChatClient::Impl::get_live_stream_info_async(peel::String video_id, gio::Cancellable* cancellable)
 {
-    if(!this->is_authorized) {
-        co_return std::unexpected(ErrorPtr(YOUTUBE_CHAT_ERROR, 1, "Client is not authorized to make API calls"));
-    }
+    g_assert(this->auth_state == AuthState::Authorized);
     if(this->is_access_expired()) {
         // Note: use passed in cancellable instead of m_impl->cancellable since this is a one-off
         //   operation and not a periodic operation
@@ -414,7 +402,7 @@ Task<StreamInfo> ChatClient::Impl::get_live_stream_info_async(peel::String video
 
 Task<void> ChatClient::send_message_async(std::string stream_url, const char* message, gio::Cancellable* cancellable)
 {
-    g_assert(m_impl->is_authorized);
+    g_assert(m_impl->auth_state == AuthState::Authorized);
     if(m_impl->is_access_expired()) {
         // Note: use passed in cancellable instead of m_impl->cancellable since this is a one-off
         //   operation and not a periodic operation
@@ -446,8 +434,7 @@ Task<void> ChatClient::send_message_async(std::string stream_url, const char* me
 Task<void> ChatClient::Impl::fetch_messages_async(
     ConversationIterator iter, guint poll_interval, peel::String next_page_token)
 {
-    g_assert(this->is_authorized);
-
+    g_assert(this->auth_state == AuthState::Authorized);
     auto& stream_url = iter->first;
     Conversation& conversation = iter->second;
     conversation.fetch_messages_source.disconnect();
